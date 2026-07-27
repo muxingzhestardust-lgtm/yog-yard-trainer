@@ -1,0 +1,95 @@
+﻿Yog-Sothoth's Yard 外部修改器 使用说明
+========================================
+
+适用对象
+--------
+本包用于 IL2CPP 版《Yog-Sothoth's Yard》，基于 BepInEx 6 插件 + 外部 WinForms UI。
+
+包含文件
+--------
+BepInEx\plugins\ScriptTrainer.dll     游戏内 BepInEx 插件
+ScriptTrainer.UI.fixed.exe             外部修改器界面
+使用说明.txt                           本说明
+
+安装方法
+--------
+1. 确认游戏已安装 BepInEx 6 IL2CPP，并且游戏目录下存在 BepInEx 文件夹。
+2. 将本包内的 BepInEx 文件夹复制到游戏根目录，合并覆盖。
+3. 将 ScriptTrainer.UI.fixed.exe 放在游戏根目录。
+4. 启动游戏并进入存档。
+5. 运行 ScriptTrainer.UI.fixed.exe。
+
+推荐目录结构
+------------
+Yog-Sothoth's Yard\
+  ScriptTrainer.UI.fixed.exe
+  BepInEx\
+    plugins\
+      ScriptTrainer.dll
+
+使用方法
+--------
+1. 启动游戏并进入一个存档。
+2. 打开 ScriptTrainer.UI.fixed.exe。
+3. 常用功能页可修改现金、San、灵魂、清洁度、恶值、行动力和角色好感度。
+4. 获取物品页可搜索物品名称或 ID，选择物品后点击“添加”。
+5. 双击物品列表中的物品也会尝试添加该物品。
+6. 如果物品列表为空，点击“导出物品”，或在游戏内进入存档后等待自动导出。
+
+特殊物品说明
+------------
+普通物品通过游戏背包系统添加。
+至高遗物/神谕类物品（例如 22000-22018）通过游戏原生遗物创建逻辑处理。
+当前版本已修复直接添加至高遗物导致状态污染的问题。
+
+热键说明
+--------
+Home：显示/隐藏游戏内热键模式状态
+Ctrl+F12：手动导出物品列表
+F1-F10：属性修改热键
+F11/F12：调整数量
+数字键：输入物品 ID
+Insert：按当前 ID 添加物品
+End：检查当前 ID 物品
+
+生成的数据文件
+--------------
+BepInEx\item_ids.csv       物品 ID、名称、类型、图标路径清单
+                           （本版第 8-13 列表头改名为 Field_xlf..Field_xlr，
+                             与旧版 Field_xla..Field_xlm 同列同义，按列序解析不受影响）
+BepInEx\item_icons\        导出的物品图标
+BepInEx\ScriptTrainer.log  修改器自身日志
+
+注意事项
+--------
+1. 请先进入存档后再使用修改功能，否则游戏管理器可能尚未初始化。
+2. 添加特殊物品后，如果游戏内界面没有立即刷新，可切换页面或重新打开相关界面。
+3. 不建议在异常状态下保存游戏。若出现明显 UI/数据异常，请直接退出游戏后重新进入。
+4. 修改器通过 BepInEx\ScriptTrainer.commands 和 BepInEx\ScriptTrainer.responses 与游戏通信。
+5. 若外部 UI 提示命令无响应，请确认游戏已启动、已进入存档，并且 ScriptTrainer.dll 已加载。
+
+排错方法
+--------
+1. 查看 BepInEx\ScriptTrainer.log，确认是否有 “ScriptTrainer loaded for IL2CPP.”。
+2. 查看 BepInEx\LogOutput.log，确认 BepInEx 是否正常加载插件。
+3. 如果物品名称或图标缺失，进入存档后点击 UI 中的“导出物品”。
+4. 如果替换 DLL 失败，请先关闭游戏，因为游戏运行时会占用 ScriptTrainer.dll。
+5. 若 LogOutput.log 出现大量 “MissingMethodException: Method not found”，
+   或 ScriptTrainer.log 出现 “[TRACKER] patch failed/missing”，
+   说明游戏又更新并改变了内部混淆名，本修改器需要重新适配，请勿继续使用旧版。
+
+版本兼容性（重要）
+------------------
+本版修改器只适配 Steam build 24329824（游戏 2026-07-23 更新）及同代版本。
+游戏每次更新都可能打乱内部混淆名（如 2026-07-23 更新新增“占卜”功能后整体位移），
+旧版修改器在新版游戏上会完全失效（每帧报 Method not found）。
+判断游戏版本：steamapps\appmanifest_2194530.acf 中的 "buildid"。
+本版已加入自动熔断：若名称失配，只停用受影响功能并写日志，不再每帧刷错误拖垮游戏。
+
+版本说明
+--------
+当前打包版本时间：2026-07-26
+适配游戏版本：Steam build 24329824（2026-07-23 更新）
+更新内容：适配 2026-07-23 游戏更新的混淆名变更（修复 hl.dzf 崩溃与全部功能失效）；
+          混淆名集中管理；导出/更新循环加熔断保护；清理历史遗留的危险死代码。
+架构：BepInEx 6 IL2CPP 插件 + 外部 WinForms UI + 文件 IPC
