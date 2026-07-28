@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -46,9 +47,9 @@ internal sealed class MainForm : Form
 
 	private readonly TextBox searchBox = new TextBox();
 
-	private readonly Label statusLabel = new Label();
+	private readonly Label statusLabel = new ChromeLabel();
 
-	private readonly DataGridView itemGrid = new DataGridView();
+	private readonly GlassGrid itemGrid = new GlassGrid();
 
 	private readonly List<ItemRow> items = new List<ItemRow>();
 
@@ -56,22 +57,234 @@ internal sealed class MainForm : Form
 
 	private readonly Image emptyIcon = new Bitmap(32, 32);
 
+	private Control commonPage;
+
+	private Control itemsPage;
+
+	private SkinButton navCommon;
+
+	private SkinButton navItems;
+
+	private Image bgImage;
+
+	private string bgName;
+
+	private readonly string skinCfgPath;
+
+	private Bitmap backdropCache;
+
+	private Size backdropClient;
+
+	private Rectangle backdropBounds;
+
+	private int bgVersion;
+
+	private int backdropVersion = -1;
+
+	protected override CreateParams CreateParams
+	{
+		get
+		{
+			// 无边框窗口保住最小化动画与任务栏行为
+			CreateParams createParams = base.CreateParams;
+			createParams.Style |= 131072;
+			return createParams;
+		}
+	}
+
 	public MainForm()
+		: this(showItems: false)
+	{
+	}
+
+	public MainForm(bool showItems)
 	{
 		gameRoot = FindGameRoot();
 		bepinexRoot = Path.Combine(gameRoot, "BepInEx");
 		commandPath = Path.Combine(bepinexRoot, "ScriptTrainer.commands");
 		responsePath = Path.Combine(bepinexRoot, "ScriptTrainer.responses");
 		itemCsvPath = Path.Combine(bepinexRoot, "item_ids.csv");
+		skinCfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ScriptTrainer.UI.skin.cfg");
+		LoadBackground();
 		Text = "犹格索托斯的庭院 修改器";
+		try
+		{
+			Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+		}
+		catch
+		{
+		}
 		base.StartPosition = FormStartPosition.CenterScreen;
+		base.FormBorderStyle = FormBorderStyle.None;
 		MinimumSize = new Size(820, 560);
-		base.Size = new Size(920, 620);
-		BackColor = Color.FromArgb(45, 45, 48);
-		ForeColor = Color.White;
+		base.Size = new Size(960, 640);
+		BackColor = Color.FromArgb(20, 18, 24);
+		ForeColor = Skin.Text;
 		Font = new Font("Microsoft YaHei UI", 9f);
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
 		BuildUi();
+		SelectPage(showItems ? 1 : 0);
 		LoadItems();
+		ActiveControl = navCommon;
+	}
+
+	protected override void OnPaintBackground(PaintEventArgs e)
+	{
+		DrawCover(e.Graphics);
+	}
+
+	// 用户挑选的游戏 CG + DarkWindow 暗角（Assets\bg_*.jpg），等比铺满客户区、居中裁切
+	private void DrawCover(Graphics g)
+	{
+		g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+		Rectangle clientRectangle = base.ClientRectangle;
+		if (clientRectangle.Width <= 0 || clientRectangle.Height <= 0)
+		{
+			return;
+		}
+		double num = (double)bgImage.Width / (double)bgImage.Height;
+		double num2 = (double)clientRectangle.Width / (double)clientRectangle.Height;
+		Rectangle srcRect;
+		if (num > num2)
+		{
+			int num3 = Math.Max(1, (int)((double)bgImage.Height * num2));
+			srcRect = new Rectangle((bgImage.Width - num3) / 2, 0, num3, bgImage.Height);
+		}
+		else
+		{
+			int num4 = Math.Max(1, (int)((double)bgImage.Width / num2));
+			srcRect = new Rectangle(0, (bgImage.Height - num4) / 2, bgImage.Width, num4);
+		}
+		g.DrawImage(bgImage, clientRectangle, srcRect, GraphicsUnit.Pixel);
+	}
+
+	// 给子控件画「窗体背景的对应区域」：整幅 cover 只在尺寸/位置/背景变了时预渲染进缓存位图，
+	// 平时（包括滚动重绘的每个单元格）都只是从缓存里拷一块，避免实时缩放大图
+	private void PaintBackdrop(Graphics g, Control c, Rectangle clip)
+	{
+		Point point = PointToClient(c.PointToScreen(Point.Empty));
+		Rectangle rectangle = new Rectangle(point, c.Size);
+		if (backdropCache == null || backdropClient != base.ClientSize || backdropBounds != rectangle || backdropVersion != bgVersion)
+		{
+			if (backdropCache != null)
+			{
+				backdropCache.Dispose();
+			}
+			backdropCache = new Bitmap(Math.Max(1, rectangle.Width), Math.Max(1, rectangle.Height));
+			using (Graphics graphics = Graphics.FromImage(backdropCache))
+			{
+				graphics.TranslateTransform(-rectangle.X, -rectangle.Y);
+				DrawCover(graphics);
+			}
+			backdropClient = base.ClientSize;
+			backdropBounds = rectangle;
+			backdropVersion = bgVersion;
+		}
+		g.DrawImage(backdropCache, clip, clip, GraphicsUnit.Pixel);
+	}
+
+	private void LoadBackground()
+	{
+		string text = "CG_Dragon_8";
+		try
+		{
+			if (File.Exists(skinCfgPath))
+			{
+				string text2 = File.ReadAllText(skinCfgPath, Encoding.UTF8).Trim();
+				if (text2.Length > 0)
+				{
+					text = text2;
+				}
+			}
+		}
+		catch
+		{
+		}
+		string[] array = Skin.Backgrounds();
+		if (Array.IndexOf(array, text) < 0)
+		{
+			text = ((Array.IndexOf(array, "CG_Dragon_8") >= 0) ? "CG_Dragon_8" : array[0]);
+		}
+		SetBackground(text, save: false);
+	}
+
+	private void SetBackground(string name, bool save)
+	{
+		bgName = name;
+		bgImage = Skin.Img("bg_" + name);
+		bgVersion++;
+		Invalidate(invalidateChildren: true);
+		if (save)
+		{
+			try
+			{
+				File.WriteAllText(skinCfgPath, name, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	protected override void WndProc(ref Message m)
+	{
+		if (m.Msg == 132)
+		{
+			base.WndProc(ref m);
+			if ((int)m.Result == 1)
+			{
+				int lParam = m.LParam.ToInt32();
+				Point point = PointToClient(new Point((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF)));
+				m.Result = (IntPtr)HitTest(point);
+			}
+			return;
+		}
+		base.WndProc(ref m);
+	}
+
+	private int HitTest(Point p)
+	{
+		bool flag = p.X < 7;
+		bool flag2 = p.X >= base.ClientSize.Width - 7;
+		bool flag3 = p.Y < 7;
+		bool flag4 = p.Y >= base.ClientSize.Height - 7;
+		if (flag3 && flag)
+		{
+			return 13;
+		}
+		if (flag3 && flag2)
+		{
+			return 14;
+		}
+		if (flag4 && flag)
+		{
+			return 16;
+		}
+		if (flag4 && flag2)
+		{
+			return 17;
+		}
+		if (flag)
+		{
+			return 10;
+		}
+		if (flag2)
+		{
+			return 11;
+		}
+		if (flag3)
+		{
+			return 12;
+		}
+		if (flag4)
+		{
+			return 15;
+		}
+		if (p.Y < 48)
+		{
+			return 2;
+		}
+		return 1;
 	}
 
 	private string FindGameRoot()
@@ -91,124 +304,240 @@ internal sealed class MainForm : Form
 
 	private void BuildUi()
 	{
-		TabControl tabControl = new TabControl();
-		tabControl.Dock = DockStyle.Fill;
-		TabControl tabControl2 = tabControl;
-		TabPage tabPage = new TabPage("常用功能");
-		tabPage.BackColor = Color.FromArgb(66, 66, 66);
-		tabPage.ForeColor = Color.White;
-		TabPage tabPage2 = tabPage;
-		TabPage tabPage3 = new TabPage("获取物品");
-		tabPage3.BackColor = Color.FromArgb(66, 66, 66);
-		tabPage3.ForeColor = Color.White;
-		TabPage tabPage4 = tabPage3;
-		tabControl2.TabPages.Add(tabPage2);
-		tabControl2.TabPages.Add(tabPage4);
-		base.Controls.Add(tabControl2);
+		// 顶栏：徽章 + 标题 + 页签 + 最小化/关闭（Chrome* 控件命中穿透，顶栏区域可拖动窗口）
+		Panel panel = new ChromePanel
+		{
+			Dock = DockStyle.Top,
+			Height = 48,
+			BackColor = Color.Transparent
+		};
+		base.Controls.Add(panel);
+		PictureBox pictureBox = new ChromePicture
+		{
+			Image = Skin.Img("emblem"),
+			SizeMode = PictureBoxSizeMode.Zoom,
+			BackColor = Color.Transparent,
+			Bounds = new Rectangle(12, 5, 38, 38)
+		};
+		panel.Controls.Add(pictureBox);
+		Label label = new ChromeLabel
+		{
+			Text = "犹格索托斯的庭院 · 修改器",
+			AutoSize = true,
+			BackColor = Color.Transparent,
+			ForeColor = Skin.Text,
+			Font = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold),
+			Location = new Point(56, 14)
+		};
+		panel.Controls.Add(label);
+		navCommon = new SkinButton("m", "常用功能");
+		navCommon.Bounds = new Rectangle(300, 9, 118, 30);
+		navCommon.Click += delegate
+		{
+			SelectPage(0);
+		};
+		panel.Controls.Add(navCommon);
+		navItems = new SkinButton("m", "获取物品");
+		navItems.Bounds = new Rectangle(426, 9, 118, 30);
+		navItems.Click += delegate
+		{
+			SelectPage(1);
+		};
+		panel.Controls.Add(navItems);
+		IconButton iconButton = new IconButton("btn_close")
+		{
+			Anchor = AnchorStyles.Top | AnchorStyles.Right
+		};
+		iconButton.Location = new Point(panel.Width - 46, 6);
+		iconButton.Click += delegate
+		{
+			Close();
+		};
+		panel.Controls.Add(iconButton);
+		// 背景选择：点开列出全部内嵌 CG，勾选当前项，选择写入 skin.cfg 记忆
+		SkinButton bgButton = new SkinButton("m", "背景")
+		{
+			Anchor = AnchorStyles.Top | AnchorStyles.Right,
+			Bounds = new Rectangle(panel.Width - 132, 9, 76, 30)
+		};
+		ContextMenuStrip bgMenu = new ContextMenuStrip
+		{
+			Renderer = new DarkMenuRenderer(),
+			BackColor = Skin.GridRow,
+			ForeColor = Skin.Text
+		};
+		string[] array = Skin.Backgrounds();
+		foreach (string text in array)
+		{
+			string name = text;
+			ToolStripMenuItem toolStripMenuItem = new ToolStripMenuItem(Skin.BgLabel(name))
+			{
+				Tag = name,
+				ForeColor = Skin.Text
+			};
+			toolStripMenuItem.Click += delegate
+			{
+				SetBackground(name, save: true);
+			};
+			bgMenu.Items.Add(toolStripMenuItem);
+		}
+		bgMenu.Opening += delegate
+		{
+			foreach (ToolStripItem item in bgMenu.Items)
+			{
+				if (item is ToolStripMenuItem toolStripMenuItem2)
+				{
+					toolStripMenuItem2.Checked = (string)toolStripMenuItem2.Tag == bgName;
+				}
+			}
+		};
+		bgButton.Click += delegate
+		{
+			bgMenu.Show(bgButton, new Point(0, bgButton.Height));
+		};
+		panel.Controls.Add(bgButton);
 		statusLabel.Dock = DockStyle.Bottom;
-		statusLabel.Height = 34;
+		statusLabel.Height = 32;
 		statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-		statusLabel.BackColor = Color.FromArgb(30, 30, 30);
-		statusLabel.ForeColor = Color.FromArgb(180, 255, 180);
+		statusLabel.Padding = new Padding(14, 0, 0, 0);
+		statusLabel.BackColor = Skin.StatusBack;
+		statusLabel.ForeColor = Skin.StatusText;
 		statusLabel.Text = "启动游戏并进入存档后使用。";
 		base.Controls.Add(statusLabel);
-		TableLayoutPanel tableLayoutPanel = new TableLayoutPanel();
-		tableLayoutPanel.Dock = DockStyle.Fill;
-		tableLayoutPanel.ColumnCount = 1;
-		tableLayoutPanel.RowCount = 2;
-		tableLayoutPanel.BackColor = Color.FromArgb(66, 66, 66);
-		TableLayoutPanel tableLayoutPanel2 = tableLayoutPanel;
-		tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Absolute, 54f));
-		tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-		tabPage2.Controls.Add(tableLayoutPanel2);
-		FlowLayoutPanel flowLayoutPanel = new FlowLayoutPanel();
-		flowLayoutPanel.Dock = DockStyle.Fill;
-		flowLayoutPanel.Padding = new Padding(12, 10, 12, 6);
-		flowLayoutPanel.BackColor = Color.FromArgb(66, 66, 66);
-		FlowLayoutPanel flowLayoutPanel2 = flowLayoutPanel;
-		flowLayoutPanel2.Controls.Add(Label("数量"));
+		Panel panel2 = new ChromePanel
+		{
+			Dock = DockStyle.Fill,
+			BackColor = Color.Transparent,
+			Padding = new Padding(14, 6, 14, 6)
+		};
+		base.Controls.Add(panel2);
+		panel2.BringToFront();
+		commonPage = BuildCommonPage();
+		itemsPage = BuildItemsPage();
+		panel2.Controls.Add(commonPage);
+		panel2.Controls.Add(itemsPage);
+	}
+
+	private void SelectPage(int index)
+	{
+		commonPage.Visible = index == 0;
+		itemsPage.Visible = index == 1;
+		navCommon.Checked = index == 0;
+		navItems.Checked = index == 1;
+	}
+
+	private Control BuildCommonPage()
+	{
+		TableLayoutPanel tableLayoutPanel = new TableLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = Color.Transparent
+		};
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 54f));
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+		FlowLayoutPanel flowLayoutPanel = new FlowLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			Padding = new Padding(12, 10, 12, 6),
+			BackColor = Color.Transparent
+		};
+		flowLayoutPanel.Controls.Add(Label("数量"));
 		amountBox.Width = 110;
 		amountBox.Text = "10000";
-		flowLayoutPanel2.Controls.Add(amountBox);
-		flowLayoutPanel2.Controls.Add(Button("/10", delegate
+		Skin.StyleInput(amountBox);
+		flowLayoutPanel.Controls.Add(amountBox);
+		flowLayoutPanel.Controls.Add(Button("/10", delegate
 		{
 			ChangeAmount(multiply: false);
 		}, 54));
-		flowLayoutPanel2.Controls.Add(Button("x10", delegate
+		flowLayoutPanel.Controls.Add(Button("x10", delegate
 		{
 			ChangeAmount(multiply: true);
 		}, 54));
-		flowLayoutPanel2.Controls.Add(Button("刷新数值", delegate
+		flowLayoutPanel.Controls.Add(Button("刷新数值", delegate
 		{
 			SendCommand("VALUES");
 		}, 90));
-		flowLayoutPanel2.Controls.Add(Button("导出物品", delegate
+		flowLayoutPanel.Controls.Add(Button("导出物品", delegate
 		{
 			SendCommand("EXPORT_ITEMS");
 			LoadItems();
 		}, 90));
-		tableLayoutPanel2.Controls.Add(flowLayoutPanel2, 0, 0);
-		TableLayoutPanel tableLayoutPanel3 = new TableLayoutPanel();
-		tableLayoutPanel3.Dock = DockStyle.Fill;
-		tableLayoutPanel3.Padding = new Padding(18, 18, 18, 18);
-		tableLayoutPanel3.ColumnCount = 5;
-		tableLayoutPanel3.RowCount = 3;
-		TableLayoutPanel tableLayoutPanel4 = tableLayoutPanel3;
+		tableLayoutPanel.Controls.Add(flowLayoutPanel, 0, 0);
+		TableLayoutPanel tableLayoutPanel2 = new TableLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			Padding = new Padding(18, 18, 18, 18),
+			ColumnCount = 5,
+			RowCount = 3,
+			BackColor = Color.Transparent
+		};
 		for (int i = 0; i < 5; i++)
 		{
-			tableLayoutPanel4.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
+			tableLayoutPanel2.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
 		}
 		for (int j = 0; j < 3; j++)
 		{
-			tableLayoutPanel4.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+			tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
 		}
-		tableLayoutPanel2.Controls.Add(tableLayoutPanel4, 0, 1);
-		AddAttrButton(tableLayoutPanel4, "添加现金", "money", 0, 0);
-		AddAttrButton(tableLayoutPanel4, "添加 San", "san", 1, 0);
-		AddAttrButton(tableLayoutPanel4, "添加灵魂", "souls", 2, 0);
-		AddAttrButton(tableLayoutPanel4, "清洁度", "clean", 3, 0);
-		AddAttrButton(tableLayoutPanel4, "降低恶值", "evil", 4, 0);
-		AddAttrButton(tableLayoutPanel4, "行动力", "action", 0, 1);
-		AddAttrButton(tableLayoutPanel4, "耶芙娜", "dragon", 1, 1);
-		AddAttrButton(tableLayoutPanel4, "小叶子", "maid", 2, 1);
-		AddAttrButton(tableLayoutPanel4, "霞露零", "elf", 3, 1);
-		AddAttrButton(tableLayoutPanel4, "特莉波卡", "death", 4, 1);
-		TableLayoutPanel tableLayoutPanel5 = new TableLayoutPanel();
-		tableLayoutPanel5.Dock = DockStyle.Fill;
-		tableLayoutPanel5.ColumnCount = 1;
-		tableLayoutPanel5.RowCount = 2;
-		tableLayoutPanel5.BackColor = Color.FromArgb(66, 66, 66);
-		TableLayoutPanel tableLayoutPanel6 = tableLayoutPanel5;
-		tableLayoutPanel6.RowStyles.Add(new RowStyle(SizeType.Absolute, 58f));
-		tableLayoutPanel6.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-		tabPage4.Controls.Add(tableLayoutPanel6);
-		FlowLayoutPanel flowLayoutPanel3 = new FlowLayoutPanel();
-		flowLayoutPanel3.Dock = DockStyle.Fill;
-		flowLayoutPanel3.Padding = new Padding(12, 10, 12, 6);
-		flowLayoutPanel3.BackColor = Color.FromArgb(66, 66, 66);
-		FlowLayoutPanel flowLayoutPanel4 = flowLayoutPanel3;
-		flowLayoutPanel4.Controls.Add(Label("搜索"));
+		tableLayoutPanel.Controls.Add(tableLayoutPanel2, 0, 1);
+		AddAttrButton(tableLayoutPanel2, "添加现金", "money", 0, 0);
+		AddAttrButton(tableLayoutPanel2, "添加 San", "san", 1, 0);
+		AddAttrButton(tableLayoutPanel2, "添加灵魂", "souls", 2, 0);
+		AddAttrButton(tableLayoutPanel2, "清洁度", "clean", 3, 0);
+		AddAttrButton(tableLayoutPanel2, "降低恶值", "evil", 4, 0);
+		AddAttrButton(tableLayoutPanel2, "行动力", "action", 0, 1);
+		AddAttrButton(tableLayoutPanel2, "耶芙娜", "dragon", 1, 1);
+		AddAttrButton(tableLayoutPanel2, "小叶子", "maid", 2, 1);
+		AddAttrButton(tableLayoutPanel2, "霞露零", "elf", 3, 1);
+		AddAttrButton(tableLayoutPanel2, "特莉波卡", "death", 4, 1);
+		return tableLayoutPanel;
+	}
+
+	private Control BuildItemsPage()
+	{
+		TableLayoutPanel tableLayoutPanel = new TableLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = Color.Transparent
+		};
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 58f));
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+		FlowLayoutPanel flowLayoutPanel = new FlowLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			Padding = new Padding(12, 10, 12, 6),
+			BackColor = Color.Transparent
+		};
+		flowLayoutPanel.Controls.Add(Label("搜索"));
 		searchBox.Width = 210;
+		Skin.StyleInput(searchBox);
 		searchBox.TextChanged += delegate
 		{
 			FilterItems();
 		};
-		flowLayoutPanel4.Controls.Add(searchBox);
-		flowLayoutPanel4.Controls.Add(Label("物品ID"));
+		flowLayoutPanel.Controls.Add(searchBox);
+		flowLayoutPanel.Controls.Add(Label("物品ID"));
 		itemIdBox.Width = 90;
 		itemIdBox.Text = "10013";
-		flowLayoutPanel4.Controls.Add(itemIdBox);
-		flowLayoutPanel4.Controls.Add(Label("个数"));
+		Skin.StyleInput(itemIdBox);
+		flowLayoutPanel.Controls.Add(itemIdBox);
+		flowLayoutPanel.Controls.Add(Label("个数"));
 		itemCountBox.Width = 70;
 		itemCountBox.Text = "1";
-		flowLayoutPanel4.Controls.Add(itemCountBox);
-		flowLayoutPanel4.Controls.Add(Button("检查", delegate
+		Skin.StyleInput(itemCountBox);
+		flowLayoutPanel.Controls.Add(itemCountBox);
+		flowLayoutPanel.Controls.Add(Button("检查", delegate
 		{
 			SendCommand("CHECK_ITEM|" + itemIdBox.Text.Trim());
 		}, 70));
-		flowLayoutPanel4.Controls.Add(Button("添加", AddSelectedItem, 70));
-		flowLayoutPanel4.Controls.Add(Button("重载清单", LoadItems, 90));
-		tableLayoutPanel6.Controls.Add(flowLayoutPanel4, 0, 0);
+		flowLayoutPanel.Controls.Add(Button("添加", AddSelectedItem, 70));
+		flowLayoutPanel.Controls.Add(Button("重载清单", LoadItems, 90));
+		tableLayoutPanel.Controls.Add(flowLayoutPanel, 0, 0);
 		itemGrid.Dock = DockStyle.Fill;
 		itemGrid.ReadOnly = true;
 		itemGrid.AllowUserToAddRows = false;
@@ -218,20 +547,36 @@ internal sealed class MainForm : Form
 		itemGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
 		itemGrid.AutoGenerateColumns = false;
 		itemGrid.RowTemplate.Height = 42;
-		itemGrid.BackgroundColor = Color.FromArgb(45, 45, 48);
-		itemGrid.DefaultCellStyle.BackColor = Color.FromArgb(55, 55, 58);
-		itemGrid.DefaultCellStyle.ForeColor = Color.White;
-		itemGrid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(83, 109, 254);
-		itemGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(30, 30, 30);
-		itemGrid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+		itemGrid.BorderStyle = BorderStyle.None;
+		itemGrid.RowHeadersVisible = false;
+		itemGrid.BackgroundColor = Skin.GridBack;
+		itemGrid.GridColor = Skin.GridLine;
+		itemGrid.DefaultCellStyle.BackColor = Skin.GridRow;
+		itemGrid.DefaultCellStyle.ForeColor = Skin.Text;
+		itemGrid.DefaultCellStyle.SelectionBackColor = Skin.GridSel;
+		itemGrid.DefaultCellStyle.SelectionForeColor = Color.White;
+		itemGrid.AlternatingRowsDefaultCellStyle.BackColor = Skin.GridRowAlt;
+		itemGrid.AlternatingRowsDefaultCellStyle.SelectionBackColor = Skin.GridSel;
+		itemGrid.AlternatingRowsDefaultCellStyle.SelectionForeColor = Color.White;
+		itemGrid.ColumnHeadersDefaultCellStyle.BackColor = Skin.StatusBack;
+		itemGrid.ColumnHeadersDefaultCellStyle.ForeColor = Skin.Text;
+		itemGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Skin.StatusBack;
+		itemGrid.ColumnHeadersHeight = 34;
+		itemGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+		itemGrid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
 		itemGrid.EnableHeadersVisualStyles = false;
+		itemGrid.Backdrop = delegate(Graphics g, Rectangle r)
+		{
+			PaintBackdrop(g, itemGrid, r);
+		};
+		itemGrid.CellPainting += PaintGlassCell;
 		itemGrid.Columns.Add(new DataGridViewImageColumn
 		{
 			Name = "图标",
 			HeaderText = "图标",
 			Width = 54,
 			ImageLayout = DataGridViewImageCellLayout.Zoom,
-			DefaultCellStyle = 
+			DefaultCellStyle =
 			{
 				NullValue = null
 			}
@@ -280,7 +625,8 @@ internal sealed class MainForm : Form
 		{
 			AddSelectedItem();
 		};
-		tableLayoutPanel6.Controls.Add(itemGrid, 0, 1);
+		tableLayoutPanel.Controls.Add(itemGrid, 0, 1);
+		return tableLayoutPanel;
 	}
 
 	private Label Label(string text)
@@ -288,39 +634,39 @@ internal sealed class MainForm : Form
 		Label label = new Label();
 		label.Text = text;
 		label.AutoSize = true;
-		label.ForeColor = Color.White;
+		label.BackColor = Color.Transparent;
+		label.ForeColor = Skin.Text;
 		label.TextAlign = ContentAlignment.MiddleCenter;
 		label.Padding = new Padding(0, 6, 0, 0);
 		return label;
 	}
 
-	private Button Button(string text, Action action, int width)
+	private SkinButton Button(string text, Action action, int width)
 	{
-		Button button = new Button();
-		button.Text = text;
-		button.Width = width;
-		button.Height = 30;
-		button.BackColor = Color.FromArgb(140, 158, 255);
-		button.ForeColor = Color.Black;
-		button.FlatStyle = FlatStyle.Flat;
-		Button button2 = button;
-		button2.FlatAppearance.BorderSize = 0;
-		button2.Click += delegate
+		SkinButton skinButton = new SkinButton("m", text)
+		{
+			Width = width,
+			Height = 30
+		};
+		skinButton.Click += delegate
 		{
 			action();
 		};
-		return button2;
+		return skinButton;
 	}
 
 	private void AddAttrButton(TableLayoutPanel panel, string text, string attr, int col, int row)
 	{
-		Button button = Button(text, delegate
+		SkinButton skinButton = new SkinButton("l", text)
+		{
+			Dock = DockStyle.Fill,
+			Margin = new Padding(8)
+		};
+		skinButton.Click += delegate
 		{
 			SendCommand("ATTR|" + attr + "|" + Amount());
-		}, 120);
-		button.Dock = DockStyle.Fill;
-		button.Margin = new Padding(8);
-		panel.Controls.Add(button, col, row);
+		};
+		panel.Controls.Add(skinButton, col, row);
 	}
 
 	private long Amount()
@@ -453,6 +799,19 @@ internal sealed class MainForm : Form
 	private void FormatItemGrid()
 	{
 		itemGrid.ClearSelection();
+	}
+
+	// 半透明单元格：先铺窗体 CG，再叠色，最后画内容和网格线
+	private void PaintGlassCell(object sender, DataGridViewCellPaintingEventArgs e)
+	{
+		PaintBackdrop(e.Graphics, itemGrid, e.CellBounds);
+		Color color = ((e.RowIndex < 0) ? Color.FromArgb(205, Skin.StatusBack) : (((e.State & DataGridViewElementStates.Selected) != 0) ? Color.FromArgb(205, Skin.GridSel) : Color.FromArgb((e.RowIndex % 2 == 0) ? 132 : 110, Skin.GridRow)));
+		using (SolidBrush brush = new SolidBrush(color))
+		{
+			e.Graphics.FillRectangle(brush, e.CellBounds);
+		}
+		e.Paint(e.ClipBounds, DataGridViewPaintParts.Border | DataGridViewPaintParts.ContentForeground);
+		e.Handled = true;
 	}
 
 	private void FormatIconCell(object sender, DataGridViewCellFormattingEventArgs e)

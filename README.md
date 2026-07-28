@@ -3,7 +3,7 @@
 《Yog-Sothoth's Yard / 犹格索托斯的庭院》的外置修改器，三件套架构：
 
 - **`ScriptTrainer/`** — BepInEx 6 IL2CPP 插件：属性修改、物品添加、至高遗物创建、物品表/图标导出、游戏内热键
-- **`ScriptTrainer.UI/`** — 外部 WinForms 界面（独立进程），通过文件 IPC（`BepInEx\ScriptTrainer.commands` / `.responses`）与插件通信
+- **`ScriptTrainer.UI/`** — 外部 WinForms 界面（独立进程），通过文件 IPC（`BepInEx\ScriptTrainer.commands` / `.responses`）与插件通信；界面用游戏原画换肤，支持 20 张 CG 背景切换、透明物品表格、无边框拖拽/缩放
 - **`tools/MetaDump/`** — interop 程序集成员表导出器，游戏更新打乱混淆名后重新对表用
 
 衍生自 [GlossMod/UnityScriptTrainer](https://github.com/GlossMod/UnityScriptTrainer)（MIT）的犹格庭院内置修改器：
@@ -11,8 +11,9 @@
 
 ## 下载
 
-到 [Releases](../../releases) 页面下载打包好的 `ScriptTrainer_Package_*.zip`（含编译好的插件 DLL、外部 UI 和使用说明），
-解压后按包内 `使用说明.txt` 安装即可，无需自行编译。
+到 [Releases](../../releases) 页面下载打包好的 `ScriptTrainer_Package_*.zip`。包内含 **BepInEx 6 IL2CPP 本体
+（6.0.0-be.697，含 dotnet 运行时）**、编译好的插件 DLL、外部 UI 和使用说明——整包解压到游戏根目录即可，
+无需自行编译，也无需（更不容易装错版本地）单独安装 BepInEx。详细步骤见包内 `使用说明.txt`。
 
 ## 版本兼容性（重要）
 
@@ -67,5 +68,5 @@ dotnet build ScriptTrainer.UI -c Release
 
 ## 说明与许可
 
-- `ScriptTrainer.UI/` 源码为反编译恢复版（原始源码遗失），与 Release 包内 exe 功能一致
+- `ScriptTrainer.UI/` 源码为反编译恢复版（原始源码遗失），此后的界面换肤等开发直接在其上进行，Release 包内 exe 即由本源码编译
 - 本仓库按 MIT 发布；[LICENSE](LICENSE) 保留上游 Gloss Mod组 的原始版权声明，特此致谢
