@@ -105,6 +105,7 @@ internal sealed class MainForm : Form
 		responsePath = Path.Combine(bepinexRoot, "ScriptTrainer.responses");
 		itemCsvPath = Path.Combine(bepinexRoot, "item_ids.csv");
 		skinCfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ScriptTrainer.UI.skin.cfg");
+		Skin.InitBackgrounds(bepinexRoot);
 		LoadBackground();
 		Text = "犹格索托斯的庭院 修改器";
 		try
@@ -133,15 +134,22 @@ internal sealed class MainForm : Form
 		DrawCover(e.Graphics);
 	}
 
-	// 用户挑选的游戏 CG + DarkWindow 暗角（Assets\bg_*.jpg），等比铺满客户区、居中裁切
+	// 插件首启导出的游戏 CG（BepInEx\ui_backgrounds\），运行时烘焙后等比铺满客户区、
+	// 居中裁切；背景尚未提取时退成纯色底
 	private void DrawCover(Graphics g)
 	{
-		g.InterpolationMode = InterpolationMode.HighQualityBilinear;
 		Rectangle clientRectangle = base.ClientRectangle;
 		if (clientRectangle.Width <= 0 || clientRectangle.Height <= 0)
 		{
 			return;
 		}
+		if (bgImage == null)
+		{
+			using SolidBrush brush = new SolidBrush(BackColor);
+			g.FillRectangle(brush, clientRectangle);
+			return;
+		}
+		g.InterpolationMode = InterpolationMode.HighQualityBilinear;
 		double num = (double)bgImage.Width / (double)bgImage.Height;
 		double num2 = (double)clientRectangle.Width / (double)clientRectangle.Height;
 		Rectangle srcRect;
@@ -201,6 +209,11 @@ internal sealed class MainForm : Form
 		{
 		}
 		string[] array = Skin.Backgrounds();
+		if (array.Length == 0)
+		{
+			SetBackground(null, save: false);
+			return;
+		}
 		if (Array.IndexOf(array, text) < 0)
 		{
 			text = ((Array.IndexOf(array, "CG_Dragon_8") >= 0) ? "CG_Dragon_8" : array[0]);
@@ -211,10 +224,10 @@ internal sealed class MainForm : Form
 	private void SetBackground(string name, bool save)
 	{
 		bgName = name;
-		bgImage = Skin.Img("bg_" + name);
+		bgImage = ((name == null) ? null : Skin.Bg(name));
 		bgVersion++;
 		Invalidate(invalidateChildren: true);
-		if (save)
+		if (save && name != null)
 		{
 			try
 			{
@@ -354,7 +367,8 @@ internal sealed class MainForm : Form
 			Close();
 		};
 		panel.Controls.Add(iconButton);
-		// 背景选择：点开列出全部内嵌 CG，勾选当前项，选择写入 skin.cfg 记忆
+		// 背景选择：每次点开时重扫 ui_backgrounds（游戏首启导出可能发生在 UI 开着的时候），
+		// 勾选当前项，选择写入 skin.cfg 记忆；尚未提取时给出提示项
 		SkinButton bgButton = new SkinButton("m", "背景")
 		{
 			Anchor = AnchorStyles.Top | AnchorStyles.Right,
@@ -366,30 +380,10 @@ internal sealed class MainForm : Form
 			BackColor = Skin.GridRow,
 			ForeColor = Skin.Text
 		};
-		string[] array = Skin.Backgrounds();
-		foreach (string text in array)
-		{
-			string name = text;
-			ToolStripMenuItem toolStripMenuItem = new ToolStripMenuItem(Skin.BgLabel(name))
-			{
-				Tag = name,
-				ForeColor = Skin.Text
-			};
-			toolStripMenuItem.Click += delegate
-			{
-				SetBackground(name, save: true);
-			};
-			bgMenu.Items.Add(toolStripMenuItem);
-		}
+		RebuildBgMenu(bgMenu);
 		bgMenu.Opening += delegate
 		{
-			foreach (ToolStripItem item in bgMenu.Items)
-			{
-				if (item is ToolStripMenuItem toolStripMenuItem2)
-				{
-					toolStripMenuItem2.Checked = (string)toolStripMenuItem2.Tag == bgName;
-				}
-			}
+			RebuildBgMenu(bgMenu);
 		};
 		bgButton.Click += delegate
 		{
@@ -416,6 +410,36 @@ internal sealed class MainForm : Form
 		itemsPage = BuildItemsPage();
 		panel2.Controls.Add(commonPage);
 		panel2.Controls.Add(itemsPage);
+	}
+
+	private void RebuildBgMenu(ContextMenuStrip menu)
+	{
+		menu.Items.Clear();
+		string[] array = Skin.Backgrounds();
+		if (array.Length == 0)
+		{
+			menu.Items.Add(new ToolStripMenuItem("背景图未提取：先用 BepInEx 启动一次游戏")
+			{
+				Enabled = false,
+				ForeColor = Skin.TextDim
+			});
+			return;
+		}
+		foreach (string text in array)
+		{
+			string name = text;
+			ToolStripMenuItem toolStripMenuItem = new ToolStripMenuItem(Skin.BgLabel(name))
+			{
+				Tag = name,
+				ForeColor = Skin.Text,
+				Checked = name == bgName
+			};
+			toolStripMenuItem.Click += delegate
+			{
+				SetBackground(name, save: true);
+			};
+			menu.Items.Add(toolStripMenuItem);
+		}
 	}
 
 	private void SelectPage(int index)
@@ -542,6 +566,8 @@ internal sealed class MainForm : Form
 		itemGrid.ReadOnly = true;
 		itemGrid.AllowUserToAddRows = false;
 		itemGrid.AllowUserToDeleteRows = false;
+		itemGrid.AllowUserToResizeColumns = false;
+		itemGrid.AllowUserToResizeRows = false;
 		itemGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
 		itemGrid.MultiSelect = false;
 		itemGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
@@ -685,13 +711,30 @@ internal sealed class MainForm : Form
 		amountBox.Text = num.ToString();
 	}
 
+	// 普通/[特]神谕（E_Relic，20000-21999）直接添加会损坏存档，插件端已硬拦，
+	// UI 端同步屏蔽：不进列表、不发命令；[至高]系列（E_SeniorRelic，22000+）走原生创建不受影响
+	private static bool IsBlockedOracle(ItemRow row)
+	{
+		return string.Equals(row.Type, "E_Relic", StringComparison.OrdinalIgnoreCase);
+	}
+
 	private void AddSelectedItem()
 	{
 		if (itemGrid.CurrentRow != null && itemGrid.CurrentRow.Cells["ItemID"].Value != null)
 		{
 			itemIdBox.Text = itemGrid.CurrentRow.Cells["ItemID"].Value.ToString();
 		}
-		SendCommand("ADD_ITEM|" + itemIdBox.Text.Trim() + "|" + itemCountBox.Text.Trim());
+		string idText = itemIdBox.Text.Trim();
+		if (int.TryParse(idText, out var id))
+		{
+			ItemRow itemRow = items.FirstOrDefault((ItemRow r) => r.ItemID == idText);
+			if ((itemRow != null && IsBlockedOracle(itemRow)) || (itemRow == null && id >= 20000 && id < 22000))
+			{
+				SetStatus("已屏蔽：普通神谕（20000-21999）直接添加会损坏存档；[至高]系列（22000+）可正常添加。");
+				return;
+			}
+		}
+		SendCommand("ADD_ITEM|" + idText + "|" + itemCountBox.Text.Trim());
 	}
 
 	private void SendCommand(string command)
@@ -792,7 +835,7 @@ internal sealed class MainForm : Form
 	private void FilterItems()
 	{
 		string keyword = searchBox.Text.Trim();
-		List<ItemRow> dataSource = items.Where((ItemRow i) => keyword.Length == 0 || i.ItemID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.NameID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.名称.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.Type.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.IconPath.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0).Take(300).ToList();
+		List<ItemRow> dataSource = items.Where((ItemRow i) => !IsBlockedOracle(i) && (keyword.Length == 0 || i.ItemID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.NameID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.名称.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.Type.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.IconPath.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)).Take(300).ToList();
 		itemGrid.DataSource = dataSource;
 	}
 

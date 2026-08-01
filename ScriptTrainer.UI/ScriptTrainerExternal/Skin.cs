@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -10,7 +11,8 @@ using System.Windows.Forms;
 
 namespace ScriptTrainerExternal;
 
-// 皮肤：全部贴图来自游戏本体导出的 Sprite（Assets\*.png，嵌入资源，制作脚本见仓库外 make_skin.py）
+// 皮肤：小件贴图（按钮/徽章等）为嵌入资源 Assets\*.png；CG 背景由插件首启导出到
+// BepInEx\ui_backgrounds\ 后在本机运行时烘焙（见 InitBackgrounds/Bg）
 internal static class Skin
 {
 	public static readonly Color Text = Color.FromArgb(224, 210, 184);
@@ -35,6 +37,10 @@ internal static class Skin
 
 	private static readonly Dictionary<string, Image> cache = new Dictionary<string, Image>();
 
+	private static string bgSourceDir;
+
+	private static string bgBakedDir;
+
 	public static Image Img(string name)
 	{
 		if (cache.TryGetValue(name, out var value))
@@ -44,11 +50,11 @@ internal static class Skin
 		Assembly assembly = typeof(Skin).Assembly;
 		foreach (string manifestResourceName in assembly.GetManifestResourceNames())
 		{
-			if (!manifestResourceName.EndsWith(".Assets." + name + ".png", StringComparison.OrdinalIgnoreCase) && !manifestResourceName.EndsWith(".Assets." + name + ".jpg", StringComparison.OrdinalIgnoreCase))
+			if (!manifestResourceName.EndsWith(".Assets." + name + ".png", StringComparison.OrdinalIgnoreCase))
 			{
 				continue;
 			}
-			using (System.IO.Stream stream = assembly.GetManifestResourceStream(manifestResourceName))
+			using (Stream stream = assembly.GetManifestResourceStream(manifestResourceName))
 			{
 				using Image original = Image.FromStream(stream);
 				value = new Bitmap(original);
@@ -59,20 +65,163 @@ internal static class Skin
 		throw new InvalidOperationException("缺少皮肤资源: " + name);
 	}
 
-	// 可选背景清单：嵌入资源里所有 bg_*.jpg，返回去掉 bg_ 前缀的名字
+	// CG 背景不随包分发（游戏原画）：插件首次随游戏启动时把原图导出到
+	// BepInEx\ui_backgrounds\，UI 在这里读取并运行时烘焙
+	public static void InitBackgrounds(string bepinexRoot)
+	{
+		bgSourceDir = Path.Combine(bepinexRoot, "ui_backgrounds");
+		bgBakedDir = Path.Combine(bgSourceDir, "baked");
+	}
+
+	// 可选背景清单：ui_backgrounds 下所有已导出的 CG 原图（jpg）；游戏还没
+	// 用新版插件启动过时目录不存在，返回空表，由调用方降级处理
 	public static string[] Backgrounds()
 	{
 		List<string> list = new List<string>();
-		foreach (string manifestResourceName in typeof(Skin).Assembly.GetManifestResourceNames())
+		try
 		{
-			int num = manifestResourceName.IndexOf(".Assets.bg_", StringComparison.OrdinalIgnoreCase);
-			if (num >= 0 && manifestResourceName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
+			if (bgSourceDir != null && Directory.Exists(bgSourceDir))
 			{
-				list.Add(manifestResourceName.Substring(num + ".Assets.bg_".Length, manifestResourceName.Length - num - ".Assets.bg_".Length - 4));
+				foreach (string file in Directory.GetFiles(bgSourceDir, "*.jpg"))
+				{
+					list.Add(Path.GetFileNameWithoutExtension(file));
+				}
 			}
+		}
+		catch
+		{
 		}
 		list.Sort((string a, string b) => string.CompareOrdinal(SortKey(a), SortKey(b)));
 		return list.ToArray();
+	}
+
+	// 取烘焙好的背景：内存缓存 -> baked\ 磁盘缓存 -> 从原图现场烘焙；全都不可用返回 null
+	public static Image Bg(string name)
+	{
+		string key = "bg:" + name;
+		if (cache.TryGetValue(key, out var value))
+		{
+			return value;
+		}
+		string bakedPath = Path.Combine(bgBakedDir, name + ".jpg");
+		Image image = null;
+		try
+		{
+			if (File.Exists(bakedPath))
+			{
+				image = LoadBitmap(bakedPath);
+			}
+		}
+		catch
+		{
+			image = null;
+		}
+		if (image == null)
+		{
+			image = BakeBackground(name, bakedPath);
+		}
+		if (image != null)
+		{
+			cache[key] = image;
+		}
+		return image;
+	}
+
+	// 运行时烘焙，与旧版打包脚本 make_bgs.py 同一套流程：等比 cover 裁到 1400x788
+	// 铺黑底 -> 叠 DarkWindow 暗角 -> 整体压暗(150/144/156)；结果写进 baked\ 下次直读
+	private static Image BakeBackground(string name, string bakedPath)
+	{
+		try
+		{
+			string text = Path.Combine(bgSourceDir, name + ".jpg");
+			if (!File.Exists(text))
+			{
+				return null;
+			}
+			using Bitmap bitmap = new Bitmap(1400, 788);
+			using (Graphics graphics = Graphics.FromImage(bitmap))
+			{
+				graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+				graphics.PixelOffsetMode = PixelOffsetMode.Half;
+				graphics.Clear(Color.Black);
+				using (Image image = LoadBitmap(text))
+				{
+					double num = (double)image.Width / (double)image.Height;
+					double num2 = 1400.0 / 788.0;
+					Rectangle srcRect;
+					if (num > num2)
+					{
+						int num3 = Math.Max(1, (int)((double)image.Height * num2));
+						srcRect = new Rectangle((image.Width - num3) / 2, 0, num3, image.Height);
+					}
+					else
+					{
+						int num4 = Math.Max(1, (int)((double)image.Width / num2));
+						srcRect = new Rectangle(0, (image.Height - num4) / 2, image.Width, num4);
+					}
+					graphics.DrawImage(image, new Rectangle(0, 0, 1400, 788), srcRect, GraphicsUnit.Pixel);
+				}
+				string text2 = Path.Combine(bgSourceDir, "DarkWindow.png");
+				if (File.Exists(text2))
+				{
+					using Image image2 = LoadBitmap(text2);
+					graphics.DrawImage(image2, new Rectangle(0, 0, 1400, 788));
+				}
+			}
+			Bitmap bitmap2 = new Bitmap(1400, 788);
+			using (Graphics graphics2 = Graphics.FromImage(bitmap2))
+			{
+				using ImageAttributes imageAttributes = new ImageAttributes();
+				imageAttributes.SetColorMatrix(new ColorMatrix
+				{
+					Matrix00 = 150f / 255f,
+					Matrix11 = 144f / 255f,
+					Matrix22 = 156f / 255f
+				});
+				graphics2.DrawImage(bitmap, new Rectangle(0, 0, 1400, 788), 0, 0, 1400, 788, GraphicsUnit.Pixel, imageAttributes);
+			}
+			try
+			{
+				Directory.CreateDirectory(bgBakedDir);
+				SaveJpeg(bitmap2, bakedPath, 90L);
+			}
+			catch
+			{
+			}
+			return bitmap2;
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	// 经字节复制加载，避免 GDI+ 长期锁住磁盘文件
+	private static Image LoadBitmap(string path)
+	{
+		using Image original = Image.FromFile(path);
+		return new Bitmap(original);
+	}
+
+	private static void SaveJpeg(Bitmap bitmap, string path, long quality)
+	{
+		ImageCodecInfo imageCodecInfo = null;
+		ImageCodecInfo[] imageEncoders = ImageCodecInfo.GetImageEncoders();
+		foreach (ImageCodecInfo codec in imageEncoders)
+		{
+			if (codec.FormatID == ImageFormat.Jpeg.Guid)
+			{
+				imageCodecInfo = codec;
+			}
+		}
+		if (imageCodecInfo == null)
+		{
+			bitmap.Save(path, ImageFormat.Jpeg);
+			return;
+		}
+		using EncoderParameters encoderParameters = new EncoderParameters(1);
+		encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+		bitmap.Save(path, imageCodecInfo, encoderParameters);
 	}
 
 	// 数字感知排序键：数字段补零对齐，让「小叶子 3」排在「小叶子 10」前面

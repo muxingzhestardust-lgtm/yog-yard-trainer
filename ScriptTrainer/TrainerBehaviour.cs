@@ -44,6 +44,20 @@ public class TrainerBehaviour : MonoBehaviour
 
 	private bool itemListExported;
 
+	private float nextBgExportAttemptTime = 3f;
+
+	private bool uiBgExported;
+
+	// 外部 UI 换肤用的 CG 背景清单；Resources 路径 = "UIAtlas/CG/" + 名字
+	//（路径查自 globalgamemanagers 的 ResourceManager 容器表，大小写不敏感）
+	private static readonly string[] UiBackgroundNames = new string[20]
+	{
+		"A108", "BG_15_4", "CG_Death_1", "CG_Death_5", "CG_Death_6_1",
+		"CG_Dragon_4", "CG_Dragon_5", "CG_Dragon_6", "CG_Dragon_7", "CG_Dragon_8",
+		"CG_Dragon_9", "CG_Elf_2", "CG_Elf_3", "CG_Elf_6", "CG_Elf_7_1",
+		"CG_Maid_10", "CG_Maid_11", "CG_Maid_3", "CG_Maid_6", "CG_Maid_8"
+	};
+
 	private bool exportBroken;
 
 	private int consecutiveUpdateErrors;
@@ -67,6 +81,7 @@ public class TrainerBehaviour : MonoBehaviour
 		{
 			PollExternalCommands();
 			TryExportItemList(force: false);
+			TryExportUiBackgrounds();
 			consecutiveUpdateErrors = 0;
 		}
 		catch (Exception ex)
@@ -367,9 +382,17 @@ public class TrainerBehaviour : MonoBehaviour
 		try
 		{
 			Item itemFromTable = GetItemFromTable(itemId);
-			if (itemFromTable != null && itemFromTable.xlg.ToString() == "E_SeniorRelic")
+			string typeName = itemFromTable?.xlg.ToString() ?? string.Empty;
+			if (typeName == "E_SeniorRelic")
 			{
 				TryAddSeniorRelic(itemId);
+				return;
+			}
+			// 普通/[特]神谕（E_Relic，20000-21999）没有可复用的原生创建逻辑，走背包添加会
+			// 污染存档，整类主动屏蔽；物品表未就绪时按 ID 段兜底，宁可错拦不可漏放
+			if (typeName == "E_Relic" || (itemFromTable == null && itemId >= 20000 && itemId < 22000))
+			{
+				SetMessage($"已拦截 ID={itemId}：普通神谕直接添加会损坏存档，修改器已主动屏蔽（[至高]系列 22000+ 不受影响）。", writeFile: true);
 				return;
 			}
 			qo bag = qo.bheq;
@@ -888,6 +911,122 @@ public class TrainerBehaviour : MonoBehaviour
 		catch
 		{
 			return null;
+		}
+	}
+
+	// 外部 UI 的换肤背景不再随包分发（避免直接再分发游戏原画），改为首次启动时从游戏
+	// 资源导出到 BepInEx\ui_backgrounds\：CG 存 JPG（UI 烘焙时会铺到不透明底上，不需要
+	// alpha），DarkWindow 暗角要保留 alpha 所以存 PNG。全部文件已存在时整段跳过。
+	private void TryExportUiBackgrounds()
+	{
+		if (uiBgExported || Time.realtimeSinceStartup < nextBgExportAttemptTime)
+		{
+			return;
+		}
+		nextBgExportAttemptTime = Time.realtimeSinceStartup + 15f;
+		int num = 0;
+		int num2 = 0;
+		string text;
+		try
+		{
+			text = Path.Combine(Paths.BepInExRootPath, "ui_backgrounds");
+			Directory.CreateDirectory(text);
+			string[] uiBackgroundNames = UiBackgroundNames;
+			foreach (string text2 in uiBackgroundNames)
+			{
+				string text3 = Path.Combine(text, text2 + ".jpg");
+				if (!File.Exists(text3))
+				{
+					if (ExportResourceTexture("UIAtlas/CG/" + text2, text3, asPng: false))
+					{
+						num++;
+					}
+					else
+					{
+						num2++;
+					}
+				}
+			}
+			string text4 = Path.Combine(text, "DarkWindow.png");
+			if (!File.Exists(text4))
+			{
+				if (ExportResourceTexture("Arts/UI/Interface/DarkWindow", text4, asPng: true))
+				{
+					num++;
+				}
+				else
+				{
+					num2++;
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			TrainerLog.Write("UI background export failed: " + ex);
+			return;
+		}
+		if (num2 == 0)
+		{
+			uiBgExported = true;
+			if (num > 0)
+			{
+				TrainerLog.Write($"UI backgrounds exported: {num} new file(s) -> {text}");
+			}
+		}
+		else
+		{
+			TrainerLog.Write($"UI background export incomplete: {num} ok, {num2} failed; will retry.");
+		}
+	}
+
+	private static bool ExportResourceTexture(string resourcePath, string filePath, bool asPng)
+	{
+		Texture2D texture2D = Resources.Load<Texture2D>(resourcePath);
+		if (texture2D == null)
+		{
+			return false;
+		}
+		try
+		{
+			Texture2D texture2D2 = CopyFullTexture(texture2D);
+			byte[] array = (asPng ? texture2D2.EncodeToPNG() : ImageConversion.EncodeToJPG(texture2D2, 92));
+			UnityEngine.Object.Destroy(texture2D2);
+			if (array == null || array.Length == 0)
+			{
+				return false;
+			}
+			File.WriteAllBytes(filePath, array);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			TrainerLog.Write("Export texture " + resourcePath + " failed: " + ex.Message);
+			return false;
+		}
+		finally
+		{
+			Resources.UnloadAsset(texture2D);
+		}
+	}
+
+	// CopySpriteTexture 的整图版：压缩纹理不可直接读像素，走 Blit -> ReadPixels 通道
+	private static Texture2D CopyFullTexture(Texture2D texture)
+	{
+		RenderTexture active = RenderTexture.active;
+		RenderTexture temporary = RenderTexture.GetTemporary(texture.width, texture.height, 0, RenderTextureFormat.ARGB32);
+		try
+		{
+			Graphics.Blit(texture, temporary);
+			RenderTexture.active = temporary;
+			Texture2D texture2D = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, mipChain: false);
+			texture2D.ReadPixels(new Rect(0f, 0f, temporary.width, temporary.height), 0, 0);
+			texture2D.Apply();
+			return texture2D;
+		}
+		finally
+		{
+			RenderTexture.active = active;
+			RenderTexture.ReleaseTemporary(temporary);
 		}
 	}
 

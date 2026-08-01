@@ -3,7 +3,7 @@
 《Yog-Sothoth's Yard / 犹格索托斯的庭院》的外置修改器，三件套架构：
 
 - **`ScriptTrainer/`** — BepInEx 6 IL2CPP 插件：属性修改、物品添加、至高遗物创建、物品表/图标导出、游戏内热键
-- **`ScriptTrainer.UI/`** — 外部 WinForms 界面（独立进程），通过文件 IPC（`BepInEx\ScriptTrainer.commands` / `.responses`）与插件通信；界面用游戏原画换肤，支持 20 张 CG 背景切换、透明物品表格、无边框拖拽/缩放
+- **`ScriptTrainer.UI/`** — 外部 WinForms 界面（独立进程），通过文件 IPC（`BepInEx\ScriptTrainer.commands` / `.responses`）与插件通信；界面用游戏原画换肤，支持 20 张 CG 背景切换、透明物品表格、无边框拖拽/缩放（CG 由插件首次随游戏启动时自动提取到 `BepInEx\ui_backgrounds\`，仓库与发布包均不含游戏原画）
 - **`tools/MetaDump/`** — interop 程序集成员表导出器，游戏更新打乱混淆名后重新对表用
 
 衍生自 [GlossMod/UnityScriptTrainer](https://github.com/GlossMod/UnityScriptTrainer)（MIT）的犹格庭院内置修改器：
@@ -53,6 +53,9 @@ dotnet build ScriptTrainer.UI -c Release
 
 详见 [使用说明.txt](使用说明.txt)。简述：启动游戏并进入存档 → 运行外部 UI → 常用功能页改属性，
 获取物品页搜索/添加物品；至高遗物（22000+）走游戏原生创建逻辑。游戏内热键（Home/F1-F12 等）见说明。
+
+普通神谕（E_Relic，ID 20000-21999，含[特]系列）**已被主动屏蔽**：这批物品没有安全的添加通道，
+直接塞进背包会损坏存档，因此列表不显示、按 ID 添加（含游戏内热键）也会被插件拒绝。
 
 ## 游戏更新后的重适配流程
 
