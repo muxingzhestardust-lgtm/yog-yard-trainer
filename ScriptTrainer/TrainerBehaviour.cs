@@ -723,6 +723,8 @@ public class TrainerBehaviour : MonoBehaviour
 		case "EXPORT_ITEMS":
 			TryExportItemList(force: true);
 			return lastMessage;
+		case "EXPORT_TABLES":
+			return ExportAllTables();
 		case "VALUES":
 			LogCurrentValues();
 			return lastMessage;
@@ -742,6 +744,372 @@ public class TrainerBehaviour : MonoBehaviour
 		catch
 		{
 		}
+	}
+
+	// 通用全表导出：游戏全部数据表管理器共用同一签名（static Load() + GetItem(Int32) 返回行类，
+	// 行类是协议生成类，属性只有标量/字符串/重复字段），按签名反射自动发现，让游戏自己完成
+	// 表文件的解密与解析，再对行对象逐属性取值写 TSV 到 BepInEx\tables\。
+	private string ExportAllTables()
+	{
+		string dir = Path.Combine(Paths.BepInExRootPath, "tables");
+		Directory.CreateDirectory(dir);
+		int okTables = 0;
+		int totalRows = 0;
+		System.Collections.Generic.List<string> failures = new System.Collections.Generic.List<string>();
+		System.Collections.Generic.HashSet<string> usedNames = new System.Collections.Generic.HashSet<string>();
+		foreach (Type managerType in SafeGetTypes(typeof(hl).Assembly))
+		{
+			MethodInfo? loadMethod;
+			MethodInfo? getItemMethod;
+			try
+			{
+				loadMethod = managerType.GetMethod("Load", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+				getItemMethod = FindTableGetItem(managerType);
+			}
+			catch
+			{
+				continue;
+			}
+			if (loadMethod == null || getItemMethod == null)
+			{
+				continue;
+			}
+			string tableName = getItemMethod.ReturnType.Name;
+			if (!usedNames.Add(tableName))
+			{
+				tableName = tableName + "_" + managerType.Name;
+				usedNames.Add(tableName);
+			}
+			try
+			{
+				int rows = ExportOneTable(loadMethod, managerType, getItemMethod.ReturnType, Path.Combine(dir, tableName + ".tsv"));
+				okTables++;
+				totalRows += rows;
+				TrainerLog.Write($"Table exported: {tableName} rows={rows}");
+			}
+			catch (Exception ex)
+			{
+				failures.Add(tableName);
+				TrainerLog.Write($"Table export failed: {tableName} {ex.GetType().Name}: {ex.Message}");
+			}
+		}
+		string text2 = $"数据表导出完成：{okTables} 张 / {totalRows} 行 -> BepInEx\\tables";
+		if (failures.Count > 0)
+		{
+			text2 = text2 + $"；失败 {failures.Count} 张: " + string.Join(",", failures);
+		}
+		SetMessage(text2, writeFile: false);
+		return text2;
+	}
+
+	private static System.Collections.Generic.IEnumerable<Type> SafeGetTypes(Assembly assembly)
+	{
+		Type?[] types;
+		try
+		{
+			types = assembly.GetTypes();
+		}
+		catch (ReflectionTypeLoadException ex)
+		{
+			types = ex.Types;
+		}
+		System.Collections.Generic.List<Type> list = new System.Collections.Generic.List<Type>();
+		foreach (Type? item in types)
+		{
+			if (item != null)
+			{
+				list.Add(item);
+			}
+		}
+		return list;
+	}
+
+	// 表管理器判定：存在 GetItem(Int32) 且返回自定义行类（排除 string/基元）
+	private static MethodInfo? FindTableGetItem(Type managerType)
+	{
+		foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+		{
+			if (method.Name != "GetItem")
+			{
+				continue;
+			}
+			ParameterInfo[] parameters = method.GetParameters();
+			if (parameters.Length == 1 && parameters[0].ParameterType == typeof(int) && method.ReturnType.IsClass && method.ReturnType != typeof(string))
+			{
+				return method;
+			}
+		}
+		return null;
+	}
+
+	private int ExportOneTable(MethodInfo loadMethod, Type managerType, Type rowType, string filePath)
+	{
+		loadMethod.Invoke(null, null);
+		object? rowList = FindRowList(managerType, rowType, out string sourceDesc);
+		if (rowList == null)
+		{
+			throw new InvalidOperationException("row list not found");
+		}
+		PropertyInfo countProp = rowList.GetType().GetProperty("Count") ?? throw new InvalidOperationException("no Count");
+		MethodInfo itemGetter = rowList.GetType().GetMethod("get_Item", new Type[1] { typeof(int) }) ?? throw new InvalidOperationException("no indexer");
+		int count = Convert.ToInt32(countProp.GetValue(rowList));
+		System.Collections.Generic.List<PropertyInfo> columns = new System.Collections.Generic.List<PropertyInfo>();
+		System.Collections.Generic.List<string> skipped = new System.Collections.Generic.List<string>();
+		foreach (PropertyInfo prop in rowType.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+		{
+			if (!prop.CanRead || prop.GetIndexParameters().Length != 0)
+			{
+				continue;
+			}
+			Type pt = prop.PropertyType;
+			if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || IsScalarList(pt))
+			{
+				columns.Add(prop);
+			}
+			else
+			{
+				skipped.Add(prop.Name + ":" + pt.Name);
+			}
+		}
+		using StreamWriter writer = new StreamWriter(filePath, append: false, Encoding.UTF8);
+		writer.WriteLine($"# table={rowType.Name} rows={count} source={sourceDesc}");
+		if (skipped.Count > 0)
+		{
+			writer.WriteLine("# skipped=" + string.Join(";", skipped));
+		}
+		string[] headerCells = new string[columns.Count];
+		for (int i = 0; i < columns.Count; i++)
+		{
+			headerCells[i] = columns[i].Name;
+		}
+		writer.WriteLine(string.Join("\t", headerCells));
+		string[] cells = new string[columns.Count];
+		for (int rowIndex = 0; rowIndex < count; rowIndex++)
+		{
+			object? row = itemGetter.Invoke(rowList, new object[1] { rowIndex });
+			for (int i = 0; i < columns.Count; i++)
+			{
+				cells[i] = FormatCell(row, columns[i]);
+			}
+			writer.WriteLine(string.Join("\t", cells));
+		}
+		return count;
+	}
+
+	// 取表入口只认“静态返回类型里含 行类重复字段”的成员：先扫管理器静态属性（表消息或
+	// 直接就是行列表），再扫单例上的无参方法；全部先做静态类型检查再调用，避免误触发其它逻辑
+	private static object? FindRowList(Type managerType, Type rowType, out string sourceDesc)
+	{
+		foreach (PropertyInfo prop in managerType.GetProperties(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+		{
+			if (IsListOf(prop.PropertyType, rowType))
+			{
+				object? direct = SafeGetStatic(prop);
+				if (direct != null)
+				{
+					sourceDesc = "static " + prop.Name;
+					return direct;
+				}
+				continue;
+			}
+			PropertyInfo? listProp = FindListProperty(prop.PropertyType, rowType);
+			if (listProp == null)
+			{
+				continue;
+			}
+			object? message = SafeGetStatic(prop);
+			object? list = ((message == null) ? null : listProp.GetValue(message));
+			if (list != null)
+			{
+				sourceDesc = "static " + prop.Name + "." + listProp.Name;
+				return list;
+			}
+		}
+		object? singleton = GetManagerSingleton(managerType);
+		if (singleton != null)
+		{
+			foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+			{
+				if (method.GetParameters().Length != 0 || method.Name.StartsWith("get_", StringComparison.Ordinal) || method.Name.StartsWith("set_", StringComparison.Ordinal))
+				{
+					continue;
+				}
+				PropertyInfo? listProp = FindListProperty(method.ReturnType, rowType);
+				if (listProp == null)
+				{
+					continue;
+				}
+				object? message;
+				try
+				{
+					message = method.Invoke(singleton, null);
+				}
+				catch
+				{
+					continue;
+				}
+				object? list = ((message == null) ? null : listProp.GetValue(message));
+				if (list != null)
+				{
+					sourceDesc = "singleton." + method.Name + "()." + listProp.Name;
+					return list;
+				}
+			}
+		}
+		sourceDesc = "none";
+		return null;
+	}
+
+	private static object? SafeGetStatic(PropertyInfo prop)
+	{
+		try
+		{
+			return prop.GetValue(null);
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	// 单例访问器：优先“类型为管理器自身”的静态属性，其次同返回类型的静态无参方法（get-or-create 惯例）
+	private static object? GetManagerSingleton(Type managerType)
+	{
+		foreach (PropertyInfo prop in managerType.GetProperties(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+		{
+			if (prop.PropertyType == managerType)
+			{
+				object? value = SafeGetStatic(prop);
+				if (value != null)
+				{
+					return value;
+				}
+			}
+		}
+		foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+		{
+			if (method.ReturnType == managerType && method.GetParameters().Length == 0 && !method.Name.StartsWith("get_", StringComparison.Ordinal))
+			{
+				try
+				{
+					object? value = method.Invoke(null, null);
+					if (value != null)
+					{
+						return value;
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+		return null;
+	}
+
+	private static PropertyInfo? FindListProperty(Type messageType, Type rowType)
+	{
+		if (messageType.IsPrimitive || messageType.IsEnum || messageType == typeof(string) || messageType == typeof(void))
+		{
+			return null;
+		}
+		foreach (PropertyInfo prop in messageType.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+		{
+			if (prop.CanRead && prop.GetIndexParameters().Length == 0 && IsListOf(prop.PropertyType, rowType))
+			{
+				return prop;
+			}
+		}
+		return null;
+	}
+
+	// “行列表”判定：有 Int32 Count 属性 + get_Item(Int32) 索引器且元素类型为行类
+	private static bool IsListOf(Type candidate, Type rowType)
+	{
+		try
+		{
+			if (candidate.GetProperty("Count")?.PropertyType != typeof(int))
+			{
+				return false;
+			}
+			return candidate.GetMethod("get_Item", new Type[1] { typeof(int) })?.ReturnType == rowType;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool IsScalarList(Type candidate)
+	{
+		try
+		{
+			if (candidate.GetProperty("Count")?.PropertyType != typeof(int))
+			{
+				return false;
+			}
+			Type? element = candidate.GetMethod("get_Item", new Type[1] { typeof(int) })?.ReturnType;
+			return element != null && (element.IsPrimitive || element.IsEnum || element == typeof(string));
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static string FormatCell(object? row, PropertyInfo prop)
+	{
+		object? value;
+		try
+		{
+			value = ((row == null) ? null : prop.GetValue(row));
+		}
+		catch
+		{
+			return "<err>";
+		}
+		if (value == null)
+		{
+			return string.Empty;
+		}
+		Type pt = prop.PropertyType;
+		if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string))
+		{
+			return EscapeCell(value.ToString());
+		}
+		// 重复标量字段：展开为 ';' 连接
+		try
+		{
+			PropertyInfo? countProp = pt.GetProperty("Count");
+			MethodInfo? itemGetter = pt.GetMethod("get_Item", new Type[1] { typeof(int) });
+			if (countProp == null || itemGetter == null)
+			{
+				return EscapeCell(value.ToString());
+			}
+			int count = Convert.ToInt32(countProp.GetValue(value));
+			StringBuilder sb = new StringBuilder();
+			for (int i = 0; i < count; i++)
+			{
+				if (i > 0)
+				{
+					sb.Append(';');
+				}
+				sb.Append(itemGetter.Invoke(value, new object[1] { i })?.ToString());
+			}
+			return EscapeCell(sb.ToString());
+		}
+		catch
+		{
+			return "<err>";
+		}
+	}
+
+	private static string EscapeCell(string? text)
+	{
+		if (string.IsNullOrEmpty(text))
+		{
+			return string.Empty;
+		}
+		return text.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\n", "\\n");
 	}
 
 	// 熔断壳：本体在 ExportItemListCore 里。游戏更新改名时 JIT 会在"调用处"抛

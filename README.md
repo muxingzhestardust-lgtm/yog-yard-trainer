@@ -2,7 +2,7 @@
 
 《Yog-Sothoth's Yard / 犹格索托斯的庭院》的外置修改器，三件套架构：
 
-- **`ScriptTrainer/`** — BepInEx 6 IL2CPP 插件：属性修改、物品添加、至高遗物创建、物品表/图标导出、游戏内热键
+- **`ScriptTrainer/`** — BepInEx 6 IL2CPP 插件：属性修改、物品添加、至高遗物创建、物品表/图标导出、全数据表导出（`EXPORT_TABLES` 命令，签名自动发现全部表管理器并让游戏自行解密，供剧情文本等数据挖掘）、游戏内热键
 - **`ScriptTrainer.UI/`** — 外部 WinForms 界面（独立进程），通过文件 IPC（`BepInEx\ScriptTrainer.commands` / `.responses`）与插件通信；界面用游戏原画换肤，支持 20 张 CG 背景切换、透明物品表格、无边框拖拽/缩放（CG 由插件首次随游戏启动时自动提取到 `BepInEx\ui_backgrounds\`，仓库与发布包均不含游戏原画）
 - **`tools/MetaDump/`** — interop 程序集成员表导出器，游戏更新打乱混淆名后重新对表用
 
