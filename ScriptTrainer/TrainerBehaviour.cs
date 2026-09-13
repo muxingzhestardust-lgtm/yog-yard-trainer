@@ -673,6 +673,9 @@ public class TrainerBehaviour : MonoBehaviour
 			case "san":
 				ModifyAttribute("添加 San", lp.E_San, ne.E_ExtraIncrease, num);
 				break;
+			case "sanreduce":
+				ModifyAttribute("降低 San", lp.E_San, ne.E_Reduce, num);
+				break;
 			case "souls":
 				ModifyAttribute("添加灵魂", lp.E_Souls, ne.E_ExtraIncrease, num);
 				break;
@@ -728,6 +731,31 @@ public class TrainerBehaviour : MonoBehaviour
 		case "VALUES":
 			LogCurrentValues();
 			return lastMessage;
+		case "ANTI_REGRESS":
+		{
+			// 实验性：ANTI_REGRESS|1/0 切换，ANTI_REGRESS|? 查询，ANTI_REGRESS|test 直接弹一条对话
+			string arg = ((parts.Count > 2) ? parts[2] : string.Empty).Trim();
+			if (string.Equals(arg, "test", StringComparison.OrdinalIgnoreCase))
+			{
+				SetMessage(AntiRegress.ShowTestDialog(), writeFile: true);
+				return lastMessage;
+			}
+			string msg = AntiRegress.Command(arg);
+			SetMessage(msg, writeFile: true);
+			return msg;
+		}
+		case "REPLACE_RELIC":
+		{
+			// 实验性：REPLACE_RELIC|<旧版贴图目录>；目录为空时用 BepInEx\relic_override
+			string dir = ((parts.Count > 2) ? parts[2] : string.Empty).Trim();
+			if (dir.Length == 0)
+			{
+				dir = Path.Combine(Paths.BepInExRootPath, "relic_override");
+			}
+			string msg = RelicSkinSwap.Apply(dir);
+			SetMessage(msg, writeFile: true);
+			return msg;
+		}
 		default:
 			return "未知命令";
 		}

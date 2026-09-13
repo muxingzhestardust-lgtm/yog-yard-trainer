@@ -61,9 +61,18 @@ internal sealed class MainForm : Form
 
 	private Control itemsPage;
 
+	private Control experimentalPage;
+
 	private SkinButton navCommon;
 
 	private SkinButton navItems;
+
+	private SkinButton navExperimental;
+
+	// 实验性功能：旧版神谕贴图目录
+	private readonly TextBox relicDirBox = new TextBox();
+
+	private SkinButton antiRegressButton;
 
 	private Image bgImage;
 
@@ -357,6 +366,13 @@ internal sealed class MainForm : Form
 			SelectPage(1);
 		};
 		panel.Controls.Add(navItems);
+		navExperimental = new SkinButton("m", "实验性功能");
+		navExperimental.Bounds = new Rectangle(552, 9, 118, 30);
+		navExperimental.Click += delegate
+		{
+			SelectPage(2);
+		};
+		panel.Controls.Add(navExperimental);
 		IconButton iconButton = new IconButton("btn_close")
 		{
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
@@ -408,8 +424,10 @@ internal sealed class MainForm : Form
 		panel2.BringToFront();
 		commonPage = BuildCommonPage();
 		itemsPage = BuildItemsPage();
+		experimentalPage = BuildExperimentalPage();
 		panel2.Controls.Add(commonPage);
 		panel2.Controls.Add(itemsPage);
+		panel2.Controls.Add(experimentalPage);
 	}
 
 	private void RebuildBgMenu(ContextMenuStrip menu)
@@ -446,8 +464,218 @@ internal sealed class MainForm : Form
 	{
 		commonPage.Visible = index == 0;
 		itemsPage.Visible = index == 1;
+		experimentalPage.Visible = index == 2;
 		navCommon.Checked = index == 0;
 		navItems.Checked = index == 1;
+		navExperimental.Checked = index == 2;
+	}
+
+	// 实验性功能页：目前只有「替换旧版神谕贴图」。
+	// 把目录里 Relic 开头的 PNG 在运行时灌回游戏已加载的贴图（仅内存，重启恢复）。
+	private Control BuildExperimentalPage()
+	{
+		TableLayoutPanel tableLayoutPanel = new TableLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = Color.Transparent
+		};
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 54f));
+		tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+		FlowLayoutPanel flowLayoutPanel = new FlowLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			Padding = new Padding(12, 10, 12, 6),
+			BackColor = Color.Transparent,
+			WrapContents = false
+		};
+		flowLayoutPanel.Controls.Add(Label("旧版贴图目录"));
+		relicDirBox.Width = 460;
+		relicDirBox.Text = DefaultRelicDir();
+		Skin.StyleInput(relicDirBox);
+		flowLayoutPanel.Controls.Add(relicDirBox);
+		flowLayoutPanel.Controls.Add(Button("浏览...", delegate
+		{
+			using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+			{
+				dialog.Description = "选择存放旧版 Relic*.png 的目录";
+				if (Directory.Exists(relicDirBox.Text))
+				{
+					dialog.SelectedPath = relicDirBox.Text;
+				}
+				if (dialog.ShowDialog(this) == DialogResult.OK)
+				{
+					relicDirBox.Text = dialog.SelectedPath;
+				}
+			}
+		}, 70));
+		tableLayoutPanel.Controls.Add(flowLayoutPanel, 0, 0);
+		TableLayoutPanel tableLayoutPanel2 = new TableLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			Padding = new Padding(18, 18, 18, 18),
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = Color.Transparent
+		};
+		tableLayoutPanel2.RowCount = 3;
+		tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+		tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+		tableLayoutPanel2.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+		SkinButton replaceButton = new SkinButton("l", "替换旧版神谕贴图")
+		{
+			Anchor = AnchorStyles.Left | AnchorStyles.Top,
+			Margin = new Padding(8),
+			Width = 220
+		};
+		replaceButton.Click += delegate
+		{
+			string dir = relicDirBox.Text.Trim();
+			if (dir.Length == 0)
+			{
+				SetStatus("请先填写旧版贴图目录");
+				return;
+			}
+			if (!Directory.Exists(dir))
+			{
+				SetStatus("目录不存在: " + dir);
+				return;
+			}
+			// 命令协议用 '|' 分隔字段，目录里出现竖线会被截断，这里直接拒绝
+			if (dir.IndexOf('|') >= 0)
+			{
+				SetStatus("目录路径不能包含 '|'");
+				return;
+			}
+			// 二十多张 512 图 + 两张 1024 图集解码回写，比普通命令慢，等久一点
+			SendCommand("REPLACE_RELIC|" + dir, 15.0);
+		};
+		tableLayoutPanel2.Controls.Add(replaceButton, 0, 0);
+		// 防回归开关：按钮按下态 = 已开启；状态以插件回复为准，插件不在线时按本地配置显示
+		antiRegressButton = new SkinButton("l", "防回归：关")
+		{
+			Anchor = AnchorStyles.Left | AnchorStyles.Top,
+			Margin = new Padding(8),
+			Width = 220
+		};
+		antiRegressButton.Click += delegate
+		{
+			bool turnOn = !antiRegressButton.Checked;
+			string reply = SendCommandForResult("ANTI_REGRESS|" + (turnOn ? "1" : "0"), 3.0);
+			if (reply == null)
+			{
+				// 游戏没响应：直接写配置文件，插件下次启动会读到
+				WriteExperimentalConfig("anti_regress", turnOn);
+				SetStatus("游戏未响应，已写入配置文件，下次启动游戏生效。防回归：" + (turnOn ? "开" : "关"));
+			}
+			ApplyAntiRegressState(turnOn);
+		};
+		ApplyAntiRegressState(ReadExperimentalConfig("anti_regress"));
+		tableLayoutPanel2.Controls.Add(antiRegressButton, 0, 1);
+		Label tip = new Label
+		{
+			AutoSize = false,
+			Dock = DockStyle.Fill,
+			BackColor = Color.Transparent,
+			ForeColor = Skin.TextDim,
+			Margin = new Padding(8, 4, 8, 8),
+			Text = "说明：\r\n" +
+				"· 读取目录里 Relic 开头的 PNG（文件名去掉 _数字 后缀即精灵名，例如 Relic_DG.png、RelicBg_3936.png），" +
+				"在运行时直接写进游戏已加载的贴图，界面与卡牌会立即换成旧版神谕美术。\r\n" +
+				"· 需要游戏已启动并进入存档；只改内存，不动游戏文件，重启游戏即恢复原版。\r\n" +
+				"· 目录留空时插件会退回 BepInEx\\relic_override。\r\n" +
+				"· 实验性功能，若出现贴图错位或花屏，重启游戏即可。\r\n" +
+				"\r\n防回归：开启后，白天/夜晚切换时若 SAN 为 0，不再触发回归结局，而是恢复 10 点 SAN，" +
+				"并用游戏原生剧情界面弹出一段耶芙娜的对话（台词随机）。开关保存在 BepInEx\\ScriptTrainer.experimental.cfg，重启游戏仍生效。"
+		};
+		tableLayoutPanel2.Controls.Add(tip, 0, 2);
+		tableLayoutPanel.Controls.Add(tableLayoutPanel2, 0, 1);
+		return tableLayoutPanel;
+	}
+
+	// 默认目录优先级：BepInEx\relic_override（随修改器分发）> 提取脚本的输出目录
+	private string DefaultRelicDir()
+	{
+		string bundled = Path.Combine(bepinexRoot, "relic_override");
+		if (Directory.Exists(bundled))
+		{
+			return bundled;
+		}
+		return "F:\\fable\\yog_extract\\out_baidu\\resources\\Sprite";
+	}
+
+	private void ApplyAntiRegressState(bool on)
+	{
+		if (antiRegressButton == null)
+		{
+			return;
+		}
+		antiRegressButton.Checked = on;
+		antiRegressButton.Text = on ? "防回归：开" : "防回归：关";
+	}
+
+	private string ExperimentalConfigPath => Path.Combine(bepinexRoot, "ScriptTrainer.experimental.cfg");
+
+	private bool ReadExperimentalConfig(string key)
+	{
+		try
+		{
+			if (!File.Exists(ExperimentalConfigPath))
+			{
+				return false;
+			}
+			foreach (string raw in File.ReadAllLines(ExperimentalConfigPath))
+			{
+				string line = raw.Trim();
+				int eq = line.IndexOf('=');
+				if (eq > 0 && !line.StartsWith("#") && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+				{
+					string v = line.Substring(eq + 1).Trim();
+					return v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+				}
+			}
+		}
+		catch
+		{
+		}
+		return false;
+	}
+
+	private void WriteExperimentalConfig(string key, bool value)
+	{
+		try
+		{
+			List<string> lines = new List<string>();
+			bool replaced = false;
+			if (File.Exists(ExperimentalConfigPath))
+			{
+				foreach (string raw in File.ReadAllLines(ExperimentalConfigPath))
+				{
+					string line = raw.Trim();
+					int eq = line.IndexOf('=');
+					if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+					{
+						if (!replaced)
+						{
+							lines.Add(key + "=" + (value ? "1" : "0"));
+							replaced = true;
+						}
+						continue;
+					}
+					lines.Add(raw);
+				}
+			}
+			if (!replaced)
+			{
+				lines.Add(key + "=" + (value ? "1" : "0"));
+			}
+			File.WriteAllLines(ExperimentalConfigPath, lines.ToArray());
+		}
+		catch (Exception ex)
+		{
+			SetStatus("写配置失败: " + ex.Message);
+		}
 	}
 
 	private Control BuildCommonPage()
@@ -739,6 +967,45 @@ internal sealed class MainForm : Form
 
 	private void SendCommand(string command)
 	{
+		SendCommand(command, 3.0);
+	}
+
+	// 同 SendCommand，但把游戏回复返回给调用方；超时/发送失败返回 null
+	private string SendCommandForResult(string command, double timeoutSeconds)
+	{
+		if (!Directory.Exists(bepinexRoot))
+		{
+			SetStatus("未找到 BepInEx 目录: " + bepinexRoot);
+			return null;
+		}
+		string id = DateTime.Now.Ticks.ToString();
+		try
+		{
+			File.AppendAllText(commandPath, id + "|" + command + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			SetStatus("已发送命令，等待游戏响应...");
+		}
+		catch (Exception ex)
+		{
+			SetStatus("发送失败: " + ex.Message);
+			return null;
+		}
+		DateTime deadline = DateTime.Now.AddSeconds(timeoutSeconds);
+		while (DateTime.Now < deadline)
+		{
+			Application.DoEvents();
+			Thread.Sleep(80);
+			string reply = TryReadResponse(id);
+			if (reply != null)
+			{
+				SetStatus(reply);
+				return reply;
+			}
+		}
+		return null;
+	}
+
+	private void SendCommand(string command, double timeoutSeconds)
+	{
 		if (!Directory.Exists(bepinexRoot))
 		{
 			SetStatus("未找到 BepInEx 目录: " + bepinexRoot);
@@ -755,7 +1022,7 @@ internal sealed class MainForm : Form
 			SetStatus("发送失败: " + ex.Message);
 			return;
 		}
-		DateTime dateTime = DateTime.Now.AddSeconds(3.0);
+		DateTime dateTime = DateTime.Now.AddSeconds(timeoutSeconds);
 		while (DateTime.Now < dateTime)
 		{
 			Application.DoEvents();

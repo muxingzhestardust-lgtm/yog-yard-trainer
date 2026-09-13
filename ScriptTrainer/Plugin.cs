@@ -10,6 +10,7 @@ public class Plugin : BasePlugin
 	public override void Load()
 	{
 		TrackerPatches.Init();
+		AntiRegress.Init();
 		ClassInjector.RegisterTypeInIl2Cpp<TrainerBehaviour>();
 		AddComponent<TrainerBehaviour>();
 		TrainerLog.Write("ScriptTrainer loaded for IL2CPP.");
