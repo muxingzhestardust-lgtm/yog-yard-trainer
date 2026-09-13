@@ -148,12 +148,16 @@ public class TrainerBehaviour : MonoBehaviour
 		CreateText(gameObject.transform, "数量", new Vector2(-330f, 140f), new Vector2(60f, 28f), 15, TextAnchor.MiddleRight, Color.white);
 		amountInput = CreateInput(gameObject.transform, amount.ToString(), new Vector2(-245f, 140f), new Vector2(110f, 30f), delegate(string text)
 		{
-			amount = Math.Max(1L, ParseLong(text, amount));
+			amount = ParseLong(text, amount);
+			if (amount == 0)
+			{
+				amount = 1L;
+			}
 			RefreshInputs();
 		});
 		CreateButton(gameObject.transform, "/10", new Vector2(-160f, 140f), new Vector2(54f, 30f), new Color32(97, 97, 97, byte.MaxValue), delegate
 		{
-			amount = Math.Max(1L, amount / 10);
+			amount = ((amount < 0) ? Math.Min(-1L, amount / 10) : Math.Max(1L, amount / 10));
 			RefreshInputs();
 			SetMessage($"Amount={amount}", writeFile: true);
 		});
@@ -359,6 +363,13 @@ public class TrainerBehaviour : MonoBehaviour
 			{
 				SetMessage("属性管理器尚未初始化，请进入存档后再试。", writeFile: true);
 				return;
+			}
+			if (amount < 0)
+			{
+				// 负数 = 反向操作：加变减、减变加，都走游戏原生的增减效果通道
+				effect = ((effect == ne.E_Reduce) ? ne.E_ExtraIncrease : ne.E_Reduce);
+				amount = -amount;
+				label += "(反向)";
 			}
 			long value = mgr.hxn(attr);
 			mgr.hxp(attr, effect, amount);
@@ -664,7 +675,12 @@ public class TrainerBehaviour : MonoBehaviour
 		{
 		case "ATTR":
 		{
-			long num = ((parts.Count > 3) ? Math.Max(1L, ParseLong(parts[3], amount)) : amount);
+			// 允许负数：ModifyAttribute 会把负数翻成反向效果（E_ExtraIncrease <-> E_Reduce）
+			long num = ((parts.Count > 3) ? ParseLong(parts[3], amount) : amount);
+			if (num == 0)
+			{
+				return "数量不能为 0";
+			}
 			switch ((parts.Count > 2) ? parts[2] : string.Empty)
 			{
 			case "money":

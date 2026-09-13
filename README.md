@@ -51,7 +51,7 @@ dotnet build ScriptTrainer.UI -c Release
 
 ## 使用
 
-详见 [使用说明.txt](使用说明.txt)。简述：启动游戏并进入存档 → 运行外部 UI → 常用功能页改属性，
+详见 [使用说明.txt](使用说明.txt)。简述：启动游戏并进入存档 → 运行外部 UI → 常用功能页改属性（数量可为负数，表示反向操作），
 获取物品页搜索/添加物品；至高遗物（22000+）走游戏原生创建逻辑。
 
 普通神谕（E_Relic，ID 20000-21999，含[特]系列）**已被主动屏蔽**：这批物品没有安全的添加通道，
@@ -62,7 +62,7 @@ dotnet build ScriptTrainer.UI -c Release
 - **防回归**：白天/夜晚切换时若 SAN 为 0，不再触发回归结局，改为恢复 10 点 SAN 并用游戏原生剧情界面
   弹出一段耶芙娜的对话（Harmony 前缀 `ez.dnx`；对话剧本是运行时在内存里生成的 protobuf 剧本资产，
   经 `Plot.Level.nfa` 前缀喂给原生加载链）。开关持久化在 `BepInEx\ScriptTrainer.experimental.cfg`。
-- **替换旧版神谕贴图**：把目录里的 `Relic*.png` 在运行时灌回游戏已加载的 `Texture2D`，仅内存、重启恢复。
+- **替换旧版神谕贴图**：把目录里的 `Relic*.png` 在运行时灌回游戏已加载的 `Texture2D`，仅内存、重启恢复。发布包自带一套旧版贴图（`BepInEx/relic_override`，仓库里的 `relic_override/`），也是 UI 的默认目录。
 
 ## 游戏更新后的重适配流程
 

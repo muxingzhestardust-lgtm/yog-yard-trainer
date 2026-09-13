@@ -584,7 +584,7 @@ internal sealed class MainForm : Form
 				"· 读取目录里 Relic 开头的 PNG（文件名去掉 _数字 后缀即精灵名，例如 Relic_DG.png、RelicBg_3936.png），" +
 				"在运行时直接写进游戏已加载的贴图，界面与卡牌会立即换成旧版神谕美术。\r\n" +
 				"· 需要游戏已启动并进入存档；只改内存，不动游戏文件，重启游戏即恢复原版。\r\n" +
-				"· 目录留空时插件会退回 BepInEx\\relic_override。\r\n" +
+				"· 发布包已自带一套旧版贴图，放在 BepInEx\\relic_override（默认目录）；目录留空时插件也退回这里。\r\n" +
 				"· 实验性功能，若出现贴图错位或花屏，重启游戏即可。\r\n" +
 				"\r\n防回归：开启后，白天/夜晚切换时若 SAN 为 0，不再触发回归结局，而是恢复 10 点 SAN，" +
 				"并用游戏原生剧情界面弹出一段耶芙娜的对话（台词随机）。开关保存在 BepInEx\\ScriptTrainer.experimental.cfg，重启游戏仍生效。"
@@ -594,15 +594,10 @@ internal sealed class MainForm : Form
 		return tableLayoutPanel;
 	}
 
-	// 默认目录优先级：BepInEx\relic_override（随修改器分发）> 提取脚本的输出目录
+	// 默认目录：BepInEx\relic_override（旧版贴图随发布包一起分发在这里）
 	private string DefaultRelicDir()
 	{
-		string bundled = Path.Combine(bepinexRoot, "relic_override");
-		if (Directory.Exists(bundled))
-		{
-			return bundled;
-		}
-		return "F:\\fable\\yog_extract\\out_baidu\\resources\\Sprite";
+		return Path.Combine(bepinexRoot, "relic_override");
 	}
 
 	private void ApplyAntiRegressState(bool on)
@@ -708,6 +703,10 @@ internal sealed class MainForm : Form
 		{
 			ChangeAmount(multiply: true);
 		}, 54));
+		flowLayoutPanel.Controls.Add(Button("±", delegate
+		{
+			NegateAmount();
+		}, 40));
 		flowLayoutPanel.Controls.Add(Button("刷新数值", delegate
 		{
 			SendCommand("VALUES");
@@ -923,9 +922,10 @@ internal sealed class MainForm : Form
 		panel.Controls.Add(skinButton, col, row);
 	}
 
+	// 数量允许负数：负数发给插件后走反向效果（加钱变扣钱、降恶值变加恶值）；0 或非法输入按 1 处理
 	private long Amount()
 	{
-		if (!long.TryParse(amountBox.Text.Trim(), out var result) || result <= 0)
+		if (!long.TryParse(amountBox.Text.Trim(), out var result) || result == 0)
 		{
 			return 1L;
 		}
@@ -935,8 +935,15 @@ internal sealed class MainForm : Form
 	private void ChangeAmount(bool multiply)
 	{
 		long num = Amount();
-		num = (multiply ? (num * 10) : Math.Max(1L, num / 10));
-		amountBox.Text = num.ToString();
+		long sign = (num < 0) ? -1L : 1L;
+		long mag = Math.Abs(num);
+		mag = (multiply ? (mag * 10) : Math.Max(1L, mag / 10));
+		amountBox.Text = (sign * mag).ToString();
+	}
+
+	private void NegateAmount()
+	{
+		amountBox.Text = (-Amount()).ToString();
 	}
 
 	// 普通/[特]神谕（E_Relic，20000-21999）直接添加会损坏存档，插件端已硬拦，
