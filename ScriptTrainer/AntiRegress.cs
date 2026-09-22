@@ -66,8 +66,6 @@ internal static class AntiRegress
 
 	public static bool Enabled { get; private set; }
 
-	private static string ConfigPath => Path.Combine(BepInEx.Paths.BepInExRootPath, "ScriptTrainer.experimental.cfg");
-
 	// ------------------------------------------------------------------
 	// 初始化：读开关 + 装补丁（Plugin.Load 时调用）
 	// ------------------------------------------------------------------
@@ -178,72 +176,12 @@ internal static class AntiRegress
 
 	private static bool ReadConfig()
 	{
-		try
-		{
-			if (!File.Exists(ConfigPath))
-			{
-				return false;
-			}
-			foreach (string raw in File.ReadAllLines(ConfigPath))
-			{
-				string line = raw.Trim();
-				int eq = line.IndexOf('=');
-				if (eq <= 0 || line.StartsWith("#"))
-				{
-					continue;
-				}
-				if (string.Equals(line.Substring(0, eq).Trim(), ConfigKey, StringComparison.OrdinalIgnoreCase))
-				{
-					string v = line.Substring(eq + 1).Trim();
-					return v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
-				}
-			}
-		}
-		catch (Exception ex)
-		{
-			TrainerLog.Write("[ANTIREG] read config failed: " + ex.Message);
-		}
-		return false;
+		return ExperimentalConfig.Read(ConfigKey, "[ANTIREG]");
 	}
 
 	private static void WriteConfig(bool value)
 	{
-		try
-		{
-			System.Collections.Generic.List<string> lines = new System.Collections.Generic.List<string>();
-			bool replaced = false;
-			if (File.Exists(ConfigPath))
-			{
-				foreach (string raw in File.ReadAllLines(ConfigPath))
-				{
-					string line = raw.Trim();
-					int eq = line.IndexOf('=');
-					if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), ConfigKey, StringComparison.OrdinalIgnoreCase))
-					{
-						if (!replaced)
-						{
-							lines.Add(ConfigKey + "=" + (value ? "1" : "0"));
-							replaced = true;
-						}
-						continue;
-					}
-					lines.Add(raw);
-				}
-			}
-			if (!replaced)
-			{
-				if (lines.Count == 0)
-				{
-					lines.Add("# ScriptTrainer 实验性功能开关（外部 UI 与插件共用）");
-				}
-				lines.Add(ConfigKey + "=" + (value ? "1" : "0"));
-			}
-			File.WriteAllLines(ConfigPath, lines.ToArray());
-		}
-		catch (Exception ex)
-		{
-			TrainerLog.Write("[ANTIREG] write config failed: " + ex.Message);
-		}
+		ExperimentalConfig.Write(ConfigKey, value, "[ANTIREG]");
 	}
 
 	// ------------------------------------------------------------------

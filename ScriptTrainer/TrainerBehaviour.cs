@@ -760,6 +760,13 @@ public class TrainerBehaviour : MonoBehaviour
 			SetMessage(msg, writeFile: true);
 			return msg;
 		}
+		case "ALCHEMY_NOCAP":
+		{
+			// 实验性：ALCHEMY_NOCAP|1/0 切换，ALCHEMY_NOCAP|? 查询
+			string msg = AlchemyNoCap.Command((parts.Count > 2) ? parts[2] : string.Empty);
+			SetMessage(msg, writeFile: true);
+			return msg;
+		}
 		case "REPLACE_RELIC":
 		{
 			// 实验性：REPLACE_RELIC|<旧版贴图目录>；目录为空时用 BepInEx\relic_override

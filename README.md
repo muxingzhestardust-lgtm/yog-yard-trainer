@@ -63,6 +63,7 @@ dotnet build ScriptTrainer.UI -c Release
   弹出一段耶芙娜的对话（Harmony 前缀 `ez.dnx`；对话剧本是运行时在内存里生成的 protobuf 剧本资产，
   经 `Plot.Level.nfa` 前缀喂给原生加载链）。开关持久化在 `BepInEx\ScriptTrainer.experimental.cfg`。
 - **替换旧版神谕贴图**：把目录里的 `Relic*.png` 在运行时灌回游戏已加载的 `Texture2D`，仅内存、重启恢复。发布包自带一套旧版贴图（`BepInEx/relic_override`，仓库里的 `relic_override/`），也是 UI 的默认目录。
+- **全部炼成无上限**：炼金勾选「全部炼成」时不再截到 50 次，按背包材料能炼几次就炼几次（Harmony 前缀 `AlchemySystem.vo.ioe`，把 `vo.iny` 里夹到 50 的次数换回 `vo.iop` 算出的真实上限；行动力消耗在 `iny` 里只扣一次，不受影响）。
 
 ## 游戏更新后的重适配流程
 

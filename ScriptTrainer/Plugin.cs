@@ -11,6 +11,7 @@ public class Plugin : BasePlugin
 	{
 		TrackerPatches.Init();
 		AntiRegress.Init();
+		AlchemyNoCap.Init();
 		ClassInjector.RegisterTypeInIl2Cpp<TrainerBehaviour>();
 		AddComponent<TrainerBehaviour>();
 		TrainerLog.Write("ScriptTrainer loaded for IL2CPP.");

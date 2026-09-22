@@ -74,6 +74,8 @@ internal sealed class MainForm : Form
 
 	private SkinButton antiRegressButton;
 
+	private SkinButton alchemyNoCapButton;
+
 	private Image bgImage;
 
 	private string bgName;
@@ -572,7 +574,35 @@ internal sealed class MainForm : Form
 			ApplyAntiRegressState(turnOn);
 		};
 		ApplyAntiRegressState(ReadExperimentalConfig("anti_regress"));
-		tableLayoutPanel2.Controls.Add(antiRegressButton, 0, 1);
+		// 全部炼成无上限开关，同一套开关逻辑
+		alchemyNoCapButton = new SkinButton("l", "全部炼成无上限：关")
+		{
+			Anchor = AnchorStyles.Left | AnchorStyles.Top,
+			Margin = new Padding(8),
+			Width = 220
+		};
+		alchemyNoCapButton.Click += delegate
+		{
+			bool turnOn = !alchemyNoCapButton.Checked;
+			string reply = SendCommandForResult("ALCHEMY_NOCAP|" + (turnOn ? "1" : "0"), 3.0);
+			if (reply == null)
+			{
+				WriteExperimentalConfig("alchemy_nocap", turnOn);
+				SetStatus("游戏未响应，已写入配置文件，下次启动游戏生效。全部炼成无上限：" + (turnOn ? "开" : "关"));
+			}
+			ApplyAlchemyNoCapState(turnOn);
+		};
+		ApplyAlchemyNoCapState(ReadExperimentalConfig("alchemy_nocap"));
+		FlowLayoutPanel toggles = new FlowLayoutPanel
+		{
+			Dock = DockStyle.Fill,
+			BackColor = Color.Transparent,
+			WrapContents = false,
+			Margin = new Padding(0)
+		};
+		toggles.Controls.Add(antiRegressButton);
+		toggles.Controls.Add(alchemyNoCapButton);
+		tableLayoutPanel2.Controls.Add(toggles, 0, 1);
 		Label tip = new Label
 		{
 			AutoSize = false,
@@ -587,7 +617,9 @@ internal sealed class MainForm : Form
 				"· 发布包已自带一套旧版贴图，放在 BepInEx\\relic_override（默认目录）；目录留空时插件也退回这里。\r\n" +
 				"· 实验性功能，若出现贴图错位或花屏，重启游戏即可。\r\n" +
 				"\r\n防回归：开启后，白天/夜晚切换时若 SAN 为 0，不再触发回归结局，而是恢复 10 点 SAN，" +
-				"并用游戏原生剧情界面弹出一段耶芙娜的对话（台词随机）。开关保存在 BepInEx\\ScriptTrainer.experimental.cfg，重启游戏仍生效。"
+				"并用游戏原生剧情界面弹出一段耶芙娜的对话（台词随机）。\r\n" +
+				"全部炼成无上限：开启后，炼金勾选「全部炼成」时按背包材料能炼几次就炼几次，不再截到 50 次（行动力照旧只扣一次）。\r\n" +
+				"两个开关都保存在 BepInEx\\ScriptTrainer.experimental.cfg，重启游戏仍生效。"
 		};
 		tableLayoutPanel2.Controls.Add(tip, 0, 2);
 		tableLayoutPanel.Controls.Add(tableLayoutPanel2, 0, 1);
@@ -608,6 +640,16 @@ internal sealed class MainForm : Form
 		}
 		antiRegressButton.Checked = on;
 		antiRegressButton.Text = on ? "防回归：开" : "防回归：关";
+	}
+
+	private void ApplyAlchemyNoCapState(bool on)
+	{
+		if (alchemyNoCapButton == null)
+		{
+			return;
+		}
+		alchemyNoCapButton.Checked = on;
+		alchemyNoCapButton.Text = on ? "全部炼成无上限：开" : "全部炼成无上限：关";
 	}
 
 	private string ExperimentalConfigPath => Path.Combine(bepinexRoot, "ScriptTrainer.experimental.cfg");
