@@ -1118,9 +1118,10 @@ internal sealed class MainForm : Form
 			SetStatus("未找到物品清单，请进游戏后按 Ctrl+F12 或点击导出物品。路径: " + itemCsvPath);
 			return;
 		}
-		foreach (string item in File.ReadAllLines(itemCsvPath, Encoding.UTF8).Skip(1))
+		// CSV 字段可以含换行；按完整记录读取，不能按物理行拆分。
+		using StreamReader reader = new StreamReader(itemCsvPath, Encoding.UTF8);
+		foreach (string[] array in CsvRecords.Read(reader).Skip(1))
 		{
-			string[] array = SplitCsv(item);
 			if (array.Length >= 5)
 			{
 				bool flag = array.Length >= 6 && !IsNumeric(array[2]);
@@ -1145,14 +1146,16 @@ internal sealed class MainForm : Form
 			}
 		}
 		FilterItems();
-		SetStatus("已加载物品清单: " + items.Count + " 个物品。双击物品可添加。");
 	}
 
 	private void FilterItems()
 	{
 		string keyword = searchBox.Text.Trim();
-		List<ItemRow> dataSource = items.Where((ItemRow i) => !IsBlockedOracle(i) && (keyword.Length == 0 || i.ItemID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.NameID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.名称.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.Type.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.IconPath.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)).Take(300).ToList();
+		List<ItemRow> dataSource = items.Where((ItemRow i) => !IsBlockedOracle(i) && (keyword.Length == 0 || i.ItemID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.NameID.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.名称.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.Type.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 || i.IconPath.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
 		itemGrid.DataSource = dataSource;
+		int blockedCount = items.Count(IsBlockedOracle);
+		SetStatus("已加载物品清单: " + items.Count + " 个；当前显示: " + dataSource.Count +
+			" 个（已屏蔽 " + blockedCount + " 个普通/特殊神谕）。双击物品可添加。");
 	}
 
 	private void FormatItemGrid()
@@ -1213,42 +1216,6 @@ internal sealed class MainForm : Form
 	{
 		long result;
 		return long.TryParse(value, out result);
-	}
-
-	private static string[] SplitCsv(string line)
-	{
-		List<string> list = new List<string>();
-		StringBuilder stringBuilder = new StringBuilder();
-		bool flag = false;
-		for (int i = 0; i < line.Length; i++)
-		{
-			char c = line[i];
-			switch (c)
-			{
-			case '"':
-				if (flag && i + 1 < line.Length && line[i + 1] == '"')
-				{
-					stringBuilder.Append('"');
-					i++;
-				}
-				else
-				{
-					flag = !flag;
-				}
-				continue;
-			case ',':
-				if (!flag)
-				{
-					list.Add(stringBuilder.ToString());
-					stringBuilder.Length = 0;
-					continue;
-				}
-				break;
-			}
-			stringBuilder.Append(c);
-		}
-		list.Add(stringBuilder.ToString());
-		return list.ToArray();
 	}
 
 	private void SetStatus(string text)
